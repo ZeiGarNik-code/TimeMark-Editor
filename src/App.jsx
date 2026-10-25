@@ -37,6 +37,7 @@ import {
   drawTimestamp,
   estimateTextMetrics,
   expandDetectedStampRegion,
+  inferStampTypography,
   fallbackForCorner,
   inpaintInk,
   inpaintInkWithOpenCV,
@@ -67,12 +68,20 @@ const INITIAL_CONTENT = {
 const INITIAL_STYLE = {
   color: '#ffffff',
   fontScale: 0.028,
-  lineHeight: 1.17,
+  timeGlyphScale: 0.95,
+  detailGlyphScale: 0.36,
+  addressGlyphScale: 0.34,
+  lineHeight: 1.18,
+  detailLineHeight: 1.18,
+  addressLineHeight: 1.08,
+  detailGapRatio: 0.021,
+  addressGapRatio: 0.30,
+  textPaddingRatio: 0.036,
   align: 'left',
-  weight: 600,
+  weight: 300,
   opacity: 0.98,
   shadow: true,
-  fontFamily: 'Arial, Helvetica, sans-serif',
+  fontFamily: '"Roboto Condensed", "Arial Narrow", Arial, sans-serif',
 };
 const WEB_TEST_CONTENT = {
   weekday: 'Chủ Nhật',
@@ -473,6 +482,8 @@ function App() {
   const [scanData, setScanData] = useState({ confidence: 0.86, message: 'Ảnh mẫu · vùng được xác định sẵn' });
   const [content, setContent] = useState(INITIAL_CONTENT);
   const [style, setStyle] = useState(INITIAL_STYLE);
+  const [styleMatchApplied, setStyleMatchApplied] = useState(false);
+  const [fontReady, setFontReady] = useState(false);
   const [eraseColor, setEraseColor] = useState('#ffffff');
   const [eraseTolerance, setEraseTolerance] = useState(74);
   const [eraseOld, setEraseOld] = useState(true);
@@ -503,6 +514,7 @@ function App() {
   const ocrWorkerRef = useRef(null);
   const ocrRequestRef = useRef(0);
   const ocrLockRef = useRef(false);
+  const styleMatchRequestRef = useRef(0);
 
   const notify = useCallback((message) => {
     setToast(message);
@@ -518,8 +530,29 @@ function App() {
 
   useEffect(() => {
     let cancelled = false;
+    const loadLocalStampFonts = async () => {
+      try {
+        if (document.fonts?.load) {
+          await Promise.all([300, 400, 700].map((weight) => document.fonts.load(
+            `${weight} 48px "Roboto Condensed"`,
+            'Thứ Năm, 24 tháng 10, 2026 · Phú Nhuận',
+          )));
+          await document.fonts.ready;
+        }
+      } catch {
+        // System fallbacks remain available if the bundled webfont cannot load.
+      }
+      if (!cancelled) setFontReady(true);
+    };
+    void loadLocalStampFonts();
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
     setPhoto(null);
     setCleanedRegion(null);
+    setStyleMatchApplied(false);
     const image = new Image();
     image.decoding = 'async';
     image.onload = () => {
@@ -642,7 +675,7 @@ function App() {
     const layout = drawTimestamp(context, region, content, style, photo.width, photo.height, cleanedRegion.divider);
     setTextScaled(layout.scaled);
     if (showGuides) drawRegionGuide(context, region, photo.width, photo.height);
-  }, [photo, region, content, style, cleanedRegion, compareOriginal, showGuides, dragBox]);
+  }, [photo, region, content, style, cleanedRegion, compareOriginal, showGuides, dragBox, fontReady]);
 
   useEffect(() => () => window.clearTimeout(toastTimerRef.current), []);
   useEffect(() => () => { void ocrWorkerRef.current?.terminate(); }, []);
@@ -779,20 +812,66 @@ function App() {
   };
 
   const updateContent = (key, value) => setContent((current) => ({ ...current, [key]: value }));
-  const updateStyle = (key, value) => setStyle((current) => ({ ...current, [key]: value }));
+  const updateStyle = (key, value) => setStyle((current) => ({
+    ...current,
+    [key]: value,
+    ...(key === 'lineHeight' ? { detailLineHeight: value, addressLineHeight: value } : {}),
+  }));
 
-  const matchOriginalStyle = () => {
-    if (!photo || !region) return;
+  const matchOriginalStyle = useCallback(async ({ quiet = false, automatic = false } = {}) => {
+    if (!photo || !region) return false;
+    const requestId = ++styleMatchRequestRef.current;
     try {
       const x = Math.max(0, Math.round(region.x * photo.width));
       const y = Math.max(0, Math.round(region.y * photo.height));
       const width = Math.max(1, Math.min(photo.width - x, Math.round(region.w * photo.width)));
       const height = Math.max(1, Math.min(photo.height - y, Math.round(region.h * photo.height)));
       const pixels = photo.sourceCanvas.getContext('2d', { willReadFrequently: true }).getImageData(x, y, width, height);
-      const metrics = estimateTextMetrics(pixels, parseHexColor(eraseColor));
+      const inkColor = parseHexColor(eraseColor);
+      const typography = inferStampTypography(pixels, inkColor);
+      if (typography) {
+        if (typography.fontFamily.includes('Roboto Condensed') && document.fonts?.load) {
+          try {
+            await document.fonts.load(`${typography.weight} 48px "Roboto Condensed"`, 'Thứ Năm, 24 tháng 10, 2026 · Phú Nhuận');
+            await document.fonts.ready;
+          } catch {
+            // Keep the matched geometry and let the browser use the bundled font fallback stack.
+          }
+        }
+        if (requestId !== styleMatchRequestRef.current) return false;
+        setStyle((current) => ({
+          ...current,
+          color: eraseColor,
+          fontFamily: typography.fontFamily,
+          weight: typography.weight,
+          fontScale: 0.028,
+          timeGlyphScale: typography.timeGlyphScale,
+          detailGlyphScale: typography.detailGlyphScale,
+          addressGlyphScale: typography.addressGlyphScale,
+          lineHeight: 1.18,
+          detailLineHeight: typography.detailLineHeight,
+          addressLineHeight: typography.addressLineHeight,
+          detailPitchScale: typography.detailPitchScale,
+          addressPitchScale: typography.addressPitchScale,
+          detailGapRatio: typography.detailGapRatio,
+          addressGapRatio: typography.addressGapRatio,
+          textPaddingRatio: typography.textPaddingRatio,
+          sourceWidths: typography.sourceWidths,
+          align: typography.align,
+          opacity: typography.opacity,
+          shadow: typography.shadow,
+        }));
+        setStyleMatchApplied(true);
+        if (!quiet) notify('Đã tự khớp font, độ đậm, cỡ chữ và khoảng cách theo gạch cam.');
+        return true;
+      }
+
+      setStyleMatchApplied(false);
+      if (automatic) return false;
+      const metrics = estimateTextMetrics(pixels, inkColor);
       if (!metrics) {
-        notify('Chưa tìm được nét chữ màu này trong vùng. Hãy lấy mẫu đúng màu chữ cũ trước.');
-        return;
+        if (!quiet) notify('Chưa tìm được nét chữ màu này trong vùng. Hãy lấy mẫu đúng màu chữ cũ trước.');
+        return false;
       }
       setStyle((current) => ({
         ...current,
@@ -801,11 +880,29 @@ function App() {
         lineHeight: metrics.lineHeight ?? current.lineHeight,
         align: metrics.align,
       }));
-      notify(`Đã khớp gần đúng màu, cỡ chữ và căn lề từ ${metrics.lineCount} dòng gốc.`);
+      if (!quiet) notify(`Đã khớp gần đúng cỡ chữ và căn lề từ ${metrics.lineCount} dòng gốc.`);
+      return true;
     } catch {
-      notify('Không phân tích được phong cách trong vùng này. Hãy kiểm tra lại khung quét.');
+      if (!quiet) notify('Không phân tích được phong cách trong vùng này. Hãy kiểm tra lại khung quét.');
+      return false;
     }
-  };
+  }, [photo, region, eraseColor, notify]);
+
+  useEffect(() => {
+    if (!photo || photo.isSample || !region) {
+      setStyleMatchApplied(false);
+      return undefined;
+    }
+    let active = true;
+    const frame = window.requestAnimationFrame(() => {
+      if (active) void matchOriginalStyle({ quiet: true, automatic: true });
+    });
+    return () => {
+      active = false;
+      window.cancelAnimationFrame(frame);
+      styleMatchRequestRef.current += 1;
+    };
+  }, [photo, region, eraseColor, matchOriginalStyle]);
 
   const handleReadOCR = async () => {
     if (!photo || !region || ocrLockRef.current) return;
@@ -1149,12 +1246,13 @@ function App() {
                 <div className="inspector-divider" />
 
                 <section className="inspector-section style-section">
-                  <SectionHeading icon={SlidersHorizontal} title="Phong cách chữ" trailing={<button className="auto-style-badge style-match-button" title="Khớp gần đúng kiểu chữ gốc" onClick={matchOriginalStyle}><Sparkles size={12} /> Khớp ảnh gốc</button>} />
+                  <SectionHeading icon={SlidersHorizontal} title="Phong cách chữ" trailing={<button className="auto-style-badge style-match-button" title={styleMatchApplied ? 'Phân tích lại kiểu chữ từ ảnh gốc' : 'Tự động phân tích khi phát hiện gạch cam'} onClick={() => { void matchOriginalStyle(); }}><Sparkles size={12} /> {styleMatchApplied ? 'Khớp lại' : 'Khớp ảnh gốc'}</button>} />
+                  {styleMatchApplied && <div className="style-match-note"><Sparkles size={13} /> Tự chọn font, độ đậm, cỡ và giãn dòng theo gạch cam.</div>}
                   <div className="style-color-row">
                     <div className="style-color-label"><span className="color-swatch" style={{ background: style.color }} /><span><b>Màu chữ mới</b><small>Áp dụng cho 4 dòng</small></span></div>
                     <label className="color-picker" title="Chọn màu chữ mới"><input type="color" value={style.color} onChange={(event) => updateStyle('color', event.target.value)} /><span>{style.color.toUpperCase()}</span><ChevronDown size={13} /></label>
                   </div>
-                  <RangeControl label="Kích thước chữ" min={0.016} max={0.046} step={0.001} value={style.fontScale} onChange={(value) => updateStyle('fontScale', value)} display={photo ? `${Math.round(style.fontScale * photo.height)} px` : '— px'} hint="Kích thước tính theo ảnh gốc." />
+                  <RangeControl label="Tỉ lệ cỡ chữ" min={0.016} max={0.046} step={0.001} value={style.fontScale} onChange={(value) => updateStyle('fontScale', value)} display={`${Math.round(style.fontScale / 0.028 * 100)}%`} hint="Từng trường được tự tính riêng; thanh này phóng to/thu nhỏ toàn bộ." />
                   <RangeControl label="Khoảng cách dòng" min={1.0} max={1.5} step={0.01} value={style.lineHeight} onChange={(value) => updateStyle('lineHeight', value)} display={`${style.lineHeight.toFixed(2)}×`} />
                   <div className="style-options-row">
                     <div className="align-picker" aria-label="Căn lề chữ">
@@ -1162,7 +1260,7 @@ function App() {
                       <button className={style.align === 'center' ? 'selected' : ''} onClick={() => updateStyle('align', 'center')} aria-label="Căn giữa"><AlignCenter size={15} /></button>
                       <button className={style.align === 'right' ? 'selected' : ''} onClick={() => updateStyle('align', 'right')} aria-label="Căn phải"><AlignRight size={15} /></button>
                     </div>
-                    <button className={`text-style-chip ${style.weight >= 700 ? 'chip-selected' : ''}`} onClick={() => updateStyle('weight', style.weight >= 700 ? 600 : 700)}><b>B</b> Đậm</button>
+                    <button className={`text-style-chip ${style.weight >= 700 ? 'chip-selected' : ''}`} onClick={() => updateStyle('weight', style.weight >= 700 ? 300 : 700)}><b>B</b> Đậm</button>
                     <button className={`text-style-chip ${style.shadow ? 'chip-selected' : ''}`} onClick={() => updateStyle('shadow', !style.shadow)}><span className="shadow-aa">Aa</span> Bóng</button>
                   </div>
                   <RangeControl label="Độ đậm màu" min={0.45} max={1} step={0.01} value={style.opacity} onChange={(value) => updateStyle('opacity', value)} display={`${Math.round(style.opacity * 100)}%`} />

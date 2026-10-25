@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createInkMask, detectAccentDivider, drawTimestamp, estimateTextMetrics, expandDetectedStampRegion, fallbackForCorner, inpaintInk, parseHexColor, scanCornerText } from './imageProcessor.js';
+import { createInkMask, detectAccentDivider, drawTimestamp, estimateTextMetrics, expandDetectedStampRegion, fallbackForCorner, inferStampTypography, inpaintInk, parseHexColor, scanCornerText } from './imageProcessor.js';
 
 function imageData(width, height, color = [35, 48, 58, 255]) {
   const data = new Uint8ClampedArray(width * height * 4);
@@ -85,6 +85,40 @@ test('ink mask isolates bright glyphs and a narrow saturated timestamp divider',
   assert.equal(mask[2 * source.width + 2], 0);
   assert.deepEqual({ x: divider.x, y: divider.y, w: divider.w, h: divider.h }, { x: 25, y: 5, w: 3, h: 23 });
   assert.ok(divider.color.r > divider.color.g && divider.color.g > divider.color.b);
+});
+
+test('automatic typography inference uses divider-relative bands for date and weekday', () => {
+  const source = imageData(400, 180);
+  const paintRect = (x, y, width, height, color = [245, 245, 245, 255]) => {
+    for (let row = y; row < y + height; row += 1) {
+      for (let column = x; column < x + width; column += 1) {
+        source.data.set(color, (row * source.width + column) * 4);
+      }
+    }
+  };
+  paintRect(100, 20, 4, 60, [227, 179, 78, 255]);
+  paintRect(10, 22, 70, 56);
+  paintRect(112, 23, 138, 22);
+  // A bright texture bridge in the gap should not merge these two detail rows.
+  paintRect(112, 46, 148, 9);
+  paintRect(112, 58, 78, 20);
+  paintRect(10, 96, 340, 22);
+  paintRect(10, 126, 100, 19);
+
+  const inferred = inferStampTypography(source);
+  assert.ok(inferred);
+  assert.equal(inferred.fontFamily.includes('Roboto Condensed'), true);
+  assert.equal(inferred.weight, 700);
+  assert.ok(Math.abs(inferred.timeGlyphScale - 56 / 60) < 0.03);
+  assert.ok(Math.abs(inferred.detailGlyphScale - 25 / 60) < 0.03);
+  assert.ok(Math.abs(inferred.detailPitchScale - 35 / 60) < 0.03);
+  assert.ok(Math.abs(inferred.detailGapRatio - 0.02) < 0.01);
+  assert.equal(inferred.metrics.address.length, 2);
+  assert.ok(inferred.detailLineHeight >= 1 && inferred.detailLineHeight <= 1.8);
+});
+
+test('automatic typography inference declines to guess without the orange divider', () => {
+  assert.equal(inferStampTypography(imageData(180, 100)), null);
 });
 
 test('timestamp text stays aligned to the detected original divider', () => {

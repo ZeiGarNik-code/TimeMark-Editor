@@ -418,6 +418,162 @@ export function detectAccentDivider(imageData) {
   return geometry;
 }
 
+/**
+ * Infer the TimeMark stamp's typography from its orange divider and the ink
+ * geometry around it. The two detail rows are scanned in separate divider-
+ * relative bands so bright background texture cannot merge date and weekday.
+ */
+export function inferStampTypography(imageData, inkColor = { r: 255, g: 255, b: 255 }) {
+  const { width, height } = imageData ?? {};
+  if (!imageData?.data || width < 16 || height < 16) return null;
+  const divider = detectAccentDivider(imageData);
+  if (!divider) return null;
+
+  const tolerance = 34;
+  const rightStart = divider.x + divider.w + Math.max(2, Math.round(width * 0.003));
+  const rightWidth = Math.max(1, width - rightStart);
+  const upperHeight = Math.max(4, Math.round(divider.h * 0.47));
+  const lowerStart = divider.y + Math.round(divider.h * 0.55);
+  const lowerHeight = Math.max(1, divider.y + divider.h - lowerStart);
+  const timeLine = chooseInkLine(findInkLines(imageData, {
+    x: 0, y: divider.y, w: divider.x, h: divider.h,
+  }, inkColor, tolerance), divider.h * 0.35, divider.h * 1.3, divider.h * 0.3);
+  const dateLine = chooseInkLine(findInkLines(imageData, {
+    x: rightStart, y: divider.y, w: rightWidth, h: upperHeight,
+  }, inkColor, tolerance), divider.h * 0.12, divider.h * 0.7, divider.h * 0.25);
+  const weekdayLine = chooseInkLine(findInkLines(imageData, {
+    x: rightStart, y: lowerStart, w: rightWidth, h: lowerHeight,
+  }, inkColor, tolerance), divider.h * 0.12, divider.h * 0.7, divider.h * 0.2);
+  const addressStart = divider.y + divider.h + Math.round(divider.h * 0.12);
+  const addressLines = findInkLines(imageData, {
+    x: 0, y: addressStart, w: width, h: Math.max(1, height - addressStart),
+  }, inkColor, tolerance)
+    .filter((line) => line.height >= divider.h * 0.12 && line.height <= divider.h * 0.72 && line.width >= divider.h * 0.35)
+    .sort((a, b) => a.y - b.y)
+    .slice(0, 3);
+
+  const detailLines = [dateLine, weekdayLine].filter(Boolean);
+  if (!timeLine || !detailLines.length) return null;
+
+  const detailGlyphHeight = (dateLine ?? weekdayLine).height;
+  const addressGlyphHeight = addressLines[0]?.height ?? detailGlyphHeight;
+  const detailPitch = dateLine && weekdayLine ? weekdayLine.y - dateLine.y : null;
+  const addressPitches = addressLines.slice(1).map((line, index) => line.y - addressLines[index].y)
+    .filter((pitch) => pitch > addressGlyphHeight * 0.75 && pitch < divider.h * 1.5);
+  const inkCoverage = median([...detailLines, ...addressLines].map((line) => line.coverage));
+  const timeAspectRatio = timeLine.width / Math.max(1, timeLine.height);
+  const leftEdges = [timeLine.x, ...addressLines.slice(0, 1).map((line) => line.x)];
+  const textPaddingRatio = median(leftEdges) / width;
+  const detailGapRatio = (dateLine ?? weekdayLine).x - (divider.x + divider.w);
+
+  return {
+    divider,
+    fontFamily: timeAspectRatio <= 2.45
+      ? '"Roboto Condensed", "Arial Narrow", Arial, sans-serif'
+      : 'Arial, Helvetica, sans-serif',
+    weight: inkCoverage < 0.16 ? 300 : inkCoverage < 0.23 ? 400 : 700,
+    timeGlyphScale: clamp(timeLine.height / divider.h, 0.55, 1.25),
+    detailGlyphScale: clamp(detailGlyphHeight / divider.h, 0.18, 0.68),
+    addressGlyphScale: clamp(addressGlyphHeight / divider.h, 0.18, 0.68),
+    detailPitchScale: detailPitch ? clamp(detailPitch / divider.h, 0.15, 1.5) : null,
+    addressPitchScale: addressPitches.length
+      ? clamp(median(addressPitches) / divider.h, 0.15, 1.5)
+      : null,
+    detailLineHeight: detailPitch ? clamp(detailPitch / detailGlyphHeight, 0.9, 1.8) : 1.18,
+    addressLineHeight: addressPitches.length
+      ? clamp(median(addressPitches) / addressGlyphHeight, 0.9, 1.8)
+      : 1.08,
+    detailGapRatio: clamp(detailGapRatio / width, 0.006, 0.08),
+    addressGapRatio: addressLines.length
+      ? clamp((addressLines[0].y - (divider.y + divider.h)) / divider.h, 0.08, 0.75)
+      : 0.30,
+    textPaddingRatio: clamp(textPaddingRatio, 0.01, 0.10),
+    align: 'left',
+    opacity: 0.98,
+    shadow: true,
+    sourceWidths: {
+      time: timeLine.width,
+      date: dateLine?.width ?? null,
+      weekday: weekdayLine?.width ?? null,
+      address: addressLines.map((line) => line.width),
+    },
+    metrics: {
+      time: timeLine,
+      date: dateLine,
+      weekday: weekdayLine,
+      address: addressLines,
+      inkCoverage,
+      timeAspectRatio,
+    },
+  };
+}
+
+function findInkLines(imageData, box, inkColor, tolerance) {
+  const { data, width, height } = imageData;
+  const x = Math.max(0, Math.min(width - 1, Math.floor(box.x)));
+  const y = Math.max(0, Math.min(height - 1, Math.floor(box.y)));
+  const boxWidth = Math.max(0, Math.min(width - x, Math.ceil(box.w)));
+  const boxHeight = Math.max(0, Math.min(height - y, Math.ceil(box.h)));
+  if (!data || boxWidth < 1 || boxHeight < 1) return [];
+
+  const rowPixels = new Uint32Array(boxHeight);
+  const rowMinX = new Int32Array(boxHeight);
+  const rowMaxX = new Int32Array(boxHeight);
+  rowMinX.fill(boxWidth);
+  rowMaxX.fill(-1);
+  const maxDistance = tolerance * tolerance * 3;
+  for (let row = 0; row < boxHeight; row += 1) {
+    const imageY = y + row;
+    for (let column = 0; column < boxWidth; column += 1) {
+      const offset = (imageY * width + x + column) * 4;
+      const dr = data[offset] - inkColor.r;
+      const dg = data[offset + 1] - inkColor.g;
+      const db = data[offset + 2] - inkColor.b;
+      if (dr * dr + dg * dg + db * db > maxDistance) continue;
+      rowPixels[row] += 1;
+      rowMinX[row] = Math.min(rowMinX[row], column);
+      rowMaxX[row] = Math.max(rowMaxX[row], column);
+    }
+  }
+
+  const rowThreshold = Math.max(1, Math.round(boxWidth * 0.0012));
+  const activeRows = [];
+  for (let row = 0; row < boxHeight; row += 1) {
+    if (rowPixels[row] >= rowThreshold) activeRows.push(row);
+  }
+  return groupNearby(activeRows, 2).map((group) => {
+    let top = boxHeight;
+    let bottom = -1;
+    let minX = boxWidth;
+    let maxX = -1;
+    let inkPixels = 0;
+    for (let row = group.start; row <= group.end; row += 1) {
+      if (!rowPixels[row]) continue;
+      top = Math.min(top, row);
+      bottom = Math.max(bottom, row);
+      minX = Math.min(minX, rowMinX[row]);
+      maxX = Math.max(maxX, rowMaxX[row]);
+      inkPixels += rowPixels[row];
+    }
+    const lineHeight = bottom - top + 1;
+    const lineWidth = maxX - minX + 1;
+    return {
+      x: x + minX,
+      y: y + top,
+      width: lineWidth,
+      height: lineHeight,
+      inkPixels,
+      coverage: inkPixels / Math.max(1, lineWidth * lineHeight),
+    };
+  }).filter((line) => line.height >= 3 && line.width >= 4);
+}
+
+function chooseInkLine(lines, minHeight, maxHeight, minWidth) {
+  return lines
+    .filter((line) => line.height >= minHeight && line.height <= maxHeight && line.width >= minWidth)
+    .sort((a, b) => b.inkPixels - a.inkPixels)[0] ?? null;
+}
+
 function addThinAccentMasks(data, width, height, mask) {
   const divider = findAccentDivider(data, width, height);
   if (!divider) return;
@@ -646,59 +802,110 @@ function drawTimestampAroundDivider(ctx, region, content, style, canvasWidth, ca
   const y = Math.round(region.y * canvasHeight);
   const w = Math.round(region.w * canvasWidth);
   const h = Math.round(region.h * canvasHeight);
-  const paddingX = Math.max(5, w * 0.035);
-  const paddingY = Math.max(4, h * 0.075);
+  ctx.save();
   const dividerX = x + divider.x;
   const dividerY = y + divider.y;
   const dividerWidth = Math.max(2, divider.w);
   const dividerHeight = Math.max(12, divider.h);
-  const scale = clamp((style.fontScale ?? 0.028) / 0.028, 0.72, 1.24);
-  const timeSize = clamp(dividerHeight * 1.1 * scale, h * 0.28, h * 0.5);
-  const detailSize = clamp(dividerHeight * 0.52 * scale, h * 0.12, h * 0.24);
-  const addressSize = clamp(detailSize * 0.84, h * 0.10, h * 0.20);
+  const fontFamily = style.fontFamily ?? '"Roboto Condensed", "Arial Narrow", Arial, sans-serif';
+  const weight = style.weight ?? 300;
+  const scale = clamp((style.fontScale ?? 0.028) / 0.028, 0.55, 1.8);
+  const timeText = String(content.time ?? '');
+  const dateText = String(content.date ?? '');
+  const weekdayText = String(content.weekday ?? '');
+  const addressText = String(content.address ?? '').replace(/\s*·\s*/g, ', ');
+  const timeSample = '14:04';
+  const detailSample = '22 Tháng 10, 2026';
+  const weekdaySample = 'Thứ Năm';
+  const addressSamples = [
+    'Chợ Phú Nhuận, Cao Thắng, Thành Phố Hồ Chí Minh,',
+    'P. Phú Nhuận',
+  ];
+  const addressSample = addressSamples[0];
+  const sourceWidths = style.sourceWidths ?? {};
+  const addressSourceWidths = Array.isArray(sourceWidths.address) ? sourceWidths.address : [sourceWidths.address];
+  const timeGlyphHeight = dividerHeight * (style.timeGlyphScale ?? 0.95) * scale;
+  const detailGlyphHeight = dividerHeight * (style.detailGlyphScale ?? 0.40) * scale;
+  const addressGlyphHeight = dividerHeight * (style.addressGlyphScale ?? 0.40) * scale;
+  const paddingX = Math.max(5, w * (style.textPaddingRatio ?? 0.035));
+  const paddingY = Math.max(4, h * 0.075);
+  const timeSize = fontSizeForGlyphHeight(ctx, timeText || timeSample, fontFamily, weight, timeGlyphHeight);
+  const detailSize = fontSizeForGlyphHeight(ctx, detailSample, fontFamily, weight, detailGlyphHeight);
+  const addressSize = fontSizeForGlyphHeight(ctx, addressSample, fontFamily, weight, addressGlyphHeight);
+  const timeWidthScale = sourceWidthScale(ctx, timeSample, sourceWidths.time, fontFamily, weight, timeSize);
+  const dateWidthScale = sourceWidthScale(ctx, detailSample, sourceWidths.date, fontFamily, weight, detailSize);
+  const weekdayWidthScale = sourceWidthScale(ctx, weekdaySample, sourceWidths.weekday, fontFamily, weight, detailSize);
+  const addressWidthScaleForSize = (fontSize, index = 0) => sourceWidthScale(
+    ctx,
+    addressSamples[index] ?? addressSample,
+    addressSourceWidths[index] ?? addressSourceWidths[0],
+    fontFamily,
+    weight,
+    fontSize,
+  );
   const timeX = x + paddingX;
   const timeWidth = Math.max(1, dividerX - timeX - Math.max(4, w * 0.01));
-  const detailX = dividerX + dividerWidth + Math.max(8, w * 0.018);
+  const detailGap = Math.max(4, w * (style.detailGapRatio ?? 0.018));
+  const detailX = dividerX + dividerWidth + detailGap;
   const detailWidth = Math.max(1, x + w - paddingX - detailX);
-  const detailLeading = detailSize * 1.12;
-  const textTop = dividerY + Math.max(0, (dividerHeight - detailSize * 0.73 - detailLeading) / 2);
-  const addressTop = dividerY + dividerHeight + Math.max(10, dividerHeight * 0.30);
+  const lineHeightFactor = clamp((style.lineHeight ?? 1.18) / 1.18, 0.65, 1.65);
+  const detailLineHeight = clamp(style.detailLineHeight ?? style.lineHeight ?? 1.18, 0.9, 1.8);
+  const addressLineHeight = clamp(style.addressLineHeight ?? style.lineHeight ?? 1.08, 0.9, 1.8);
+  const detailLeading = style.detailPitchScale
+    ? dividerHeight * style.detailPitchScale * scale * lineHeightFactor
+    : detailSize * detailLineHeight;
+  const dateMetrics = getTextVerticalMetrics(ctx, dateText || detailSample, fontFamily, weight, detailSize);
+  const weekdayMetrics = getTextVerticalMetrics(ctx, weekdayText || weekdaySample, fontFamily, weight, detailSize);
+  const detailBlockHeight = dateText && weekdayText
+    ? detailLeading + weekdayMetrics.height
+    : (dateText ? dateMetrics.height : weekdayMetrics.height);
+  const textTop = dividerY + Math.max(0, (dividerHeight - detailBlockHeight) / 2);
+  const addressGap = dividerHeight * clamp(style.addressGapRatio ?? 0.30, 0.08, 0.75) * scale;
+  const addressTop = dividerY + dividerHeight + Math.max(6, addressGap);
   const addressMaxWidth = Math.max(1, w - paddingX * 2);
-  const addressAvailableHeight = Math.max(addressSize, y + h - paddingY - addressTop);
+  const addressAvailableHeight = Math.max(1, y + h - paddingY - addressTop);
+  const addressLeadingForSize = (fontSize) => style.addressPitchScale
+    ? dividerHeight * style.addressPitchScale * scale * (fontSize / addressSize) * lineHeightFactor
+    : fontSize * addressLineHeight;
   let fittedAddressSize = addressSize;
   let addressLines = [];
   for (let attempt = 0; attempt < 4; attempt += 1) {
-    ctx.font = `${style.weight ?? 600} ${fittedAddressSize}px ${style.fontFamily ?? 'Arial, sans-serif'}`;
-    addressLines = wrapText(ctx, String(content.address ?? '').replace(/\s*·\s*/g, ', '), addressMaxWidth);
-    const leading = fittedAddressSize * 1.2;
+    ctx.font = `${weight} ${fittedAddressSize}px ${fontFamily}`;
+    const firstLineScale = addressWidthScaleForSize(fittedAddressSize, 0);
+    addressLines = wrapText(ctx, addressText, addressMaxWidth / firstLineScale);
+    const leading = addressLeadingForSize(fittedAddressSize);
     if (addressLines.length * leading <= addressAvailableHeight) break;
     fittedAddressSize *= addressAvailableHeight / Math.max(1, addressLines.length * leading);
   }
+  const addressLineWidthScales = addressLines.map((_, index) => addressWidthScaleForSize(fittedAddressSize, index));
+  const timeMetrics = getTextVerticalMetrics(ctx, timeText || timeSample, fontFamily, weight, timeSize);
 
-  ctx.save();
   ctx.fillStyle = style.color ?? '#ffffff';
   ctx.globalAlpha = style.opacity ?? 1;
   ctx.textAlign = 'left';
-  ctx.textBaseline = 'top';
-  ctx.shadowColor = style.shadow ? 'rgba(0,0,0,.72)' : 'transparent';
-  ctx.shadowBlur = style.shadow ? Math.max(1, addressSize * 0.12) : 0;
-  ctx.shadowOffsetX = style.shadow ? Math.max(1, addressSize * 0.025) : 0;
-  ctx.shadowOffsetY = style.shadow ? Math.max(1, addressSize * 0.035) : 0;
+  ctx.textBaseline = 'alphabetic';
+  ctx.shadowColor = style.shadow ? 'rgba(0,0,0,.38)' : 'transparent';
+  ctx.shadowBlur = style.shadow ? Math.max(0.5, addressSize * 0.035) : 0;
+  ctx.shadowOffsetX = style.shadow ? Math.max(0.25, addressSize * 0.008) : 0;
+  ctx.shadowOffsetY = style.shadow ? Math.max(0.25, addressSize * 0.012) : 0;
 
-  if (content.time) {
-    ctx.font = `${style.weight ?? 600} ${timeSize}px ${style.fontFamily ?? 'Arial, sans-serif'}`;
-    const timeTop = dividerY + Math.max(0, (dividerHeight - timeSize * 0.73) / 2);
-    ctx.fillText(String(content.time), timeX, timeTop, timeWidth);
+  if (timeText) {
+    ctx.font = `${weight} ${timeSize}px ${fontFamily}`;
+    const timeTop = dividerY + Math.max(0, (dividerHeight - timeGlyphHeight) / 2);
+    fillTextHorizontallyScaled(ctx, timeText, timeX, timeTop + timeMetrics.ascent, timeWidth, timeWidthScale);
   }
 
-  ctx.font = `${style.weight ?? 600} ${detailSize}px ${style.fontFamily ?? 'Arial, sans-serif'}`;
-  if (content.date) ctx.fillText(String(content.date), detailX, textTop, detailWidth);
-  if (content.weekday) ctx.fillText(String(content.weekday), detailX, textTop + detailLeading, detailWidth);
+  ctx.font = `${weight} ${detailSize}px ${fontFamily}`;
+  if (dateText) fillTextHorizontallyScaled(ctx, dateText, detailX, textTop + dateMetrics.ascent, detailWidth, dateWidthScale);
+  if (weekdayText) fillTextHorizontallyScaled(ctx, weekdayText, detailX, textTop + (dateText ? detailLeading : 0) + weekdayMetrics.ascent, detailWidth, weekdayWidthScale);
 
-  if (addressLines.length && content.address) {
-    ctx.font = `${style.weight ?? 600} ${fittedAddressSize}px ${style.fontFamily ?? 'Arial, sans-serif'}`;
-    const addressLeading = fittedAddressSize * 1.2;
-    addressLines.forEach((line, index) => ctx.fillText(line, x + paddingX, addressTop + index * addressLeading, addressMaxWidth));
+  if (addressLines.length && addressText) {
+    ctx.font = `${weight} ${fittedAddressSize}px ${fontFamily}`;
+    const addressLeading = addressLeadingForSize(fittedAddressSize);
+    addressLines.forEach((line, index) => {
+      const metrics = getTextVerticalMetrics(ctx, line, fontFamily, weight, fittedAddressSize);
+      fillTextHorizontallyScaled(ctx, line, x + paddingX, addressTop + index * addressLeading + metrics.ascent, addressMaxWidth, addressLineWidthScales[index] ?? addressLineWidthScales[0] ?? 1);
+    });
   }
 
   ctx.shadowColor = 'transparent';
@@ -711,6 +918,49 @@ function drawTimestampAroundDivider(ctx, region, content, style, canvasWidth, ca
   ctx.fillRect(dividerX, dividerY, dividerWidth, dividerHeight);
   ctx.restore();
   return { fontSize: timeSize, scaled: true, anchoredToDivider: true };
+}
+
+function fontSizeForGlyphHeight(ctx, text, family, weight, targetHeight) {
+  const safeHeight = Math.max(1, targetHeight);
+  ctx.font = `${weight} 100px ${family}`;
+  const metrics = ctx.measureText(String(text || '0'));
+  const measuredHeight = Number(metrics.actualBoundingBoxAscent) + Number(metrics.actualBoundingBoxDescent);
+  return Number.isFinite(measuredHeight) && measuredHeight > 0
+    ? safeHeight * 100 / measuredHeight
+    : safeHeight / 0.70;
+}
+
+function getTextVerticalMetrics(ctx, text, family, weight, fontSize) {
+  ctx.font = `${weight} ${fontSize}px ${family}`;
+  const metrics = ctx.measureText(String(text || '0'));
+  const ascent = Number(metrics.actualBoundingBoxAscent);
+  const descent = Number(metrics.actualBoundingBoxDescent);
+  if (Number.isFinite(ascent) && Number.isFinite(descent) && ascent + descent > 0) {
+    return { ascent: Math.max(0, ascent), height: ascent + descent };
+  }
+  return { ascent: fontSize * 0.70, height: fontSize * 0.70 };
+}
+
+function sourceWidthScale(ctx, referenceText, sourceWidth, family, weight, fontSize) {
+  if (!Number.isFinite(sourceWidth) || sourceWidth <= 0) return 1;
+  ctx.font = `${weight} ${fontSize}px ${family}`;
+  const naturalWidth = ctx.measureText(referenceText).width;
+  return Number.isFinite(naturalWidth) && naturalWidth > 0
+    ? clamp(sourceWidth / naturalWidth, 0.65, 1.4)
+    : 1;
+}
+
+function fillTextHorizontallyScaled(ctx, text, x, baseline, maxWidth, scaleX = 1) {
+  const safeScale = Number.isFinite(scaleX) && scaleX > 0 ? scaleX : 1;
+  if (safeScale === 1 || typeof ctx.translate !== 'function' || typeof ctx.scale !== 'function') {
+    ctx.fillText(text, x, baseline, maxWidth);
+    return;
+  }
+  ctx.save();
+  ctx.translate(x, baseline);
+  ctx.scale(safeScale, 1);
+  ctx.fillText(text, 0, 0, maxWidth / safeScale);
+  ctx.restore();
 }
 
 function wrapText(ctx, text, maxWidth) {
