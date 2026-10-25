@@ -2,6 +2,14 @@
 
 Ứng dụng web thử nghiệm để giáo viên thay nội dung mốc ngày giờ trên ảnh TimeMark. Giao diện và nội dung hiện đang dùng tiếng Việt.
 
+## Xuất bản
+
+Workflow `.github/workflows/deploy-pages.yml` kiểm thử, build và triển khai lên GitHub Pages khi có push tới `main` (hoặc nhánh triển khai đang làm việc). URL ổn định dự kiến sau khi Pages được bật và workflow chạy thành công:
+
+**https://zeigarnik-code.github.io/TimeMark-Editor/**
+
+Repository hiện ở chế độ riêng tư; khả năng xuất bản trang công khai phụ thuộc quyền Pages/plan của chủ repo. Không đổi repo sang công khai nếu không muốn công khai mã nguồn. Tài khoản demo bên dưới chỉ để thử giao diện, không phải xác thực bảo mật.
+
 ## Chạy thử
 
 ```bash

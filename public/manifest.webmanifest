@@ -3,14 +3,14 @@
   "short_name": "TimeMark",
   "description": "Chỉnh sửa mốc thời gian trên ảnh TimeMark ngay trên thiết bị.",
   "lang": "vi",
-  "start_url": "/",
-  "scope": "/",
+  "start_url": "./",
+  "scope": "./",
   "display": "standalone",
   "background_color": "#f4f6f9",
   "theme_color": "#f4f6f9",
   "icons": [
     {
-      "src": "/icon.svg",
+      "src": "./icon.svg",
       "sizes": "any",
       "type": "image/svg+xml",
       "purpose": "any maskable"
