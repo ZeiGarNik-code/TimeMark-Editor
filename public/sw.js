@@ -1,13 +1,17 @@
-const CACHE_NAME = 'timemark-studio-v1';
-const APP_SHELL = ['/', '/index.html', '/manifest.webmanifest', '/icon.svg', '/demo-school.jpg'];
+const CACHE_NAME = 'timemark-studio-v2';
+const APP_BASE = new URL('.', self.registration.scope);
+const appUrl = (path = '') => new URL(path, APP_BASE).href;
+const INDEX_URL = appUrl('index.html');
+const APP_SHELL = ['', 'index.html', 'manifest.webmanifest', 'icon.svg', 'demo-school.jpg'].map(appUrl);
 
 self.addEventListener('install', (event) => {
   event.waitUntil((async () => {
     const cache = await caches.open(CACHE_NAME);
     await cache.addAll(APP_SHELL);
-    const shell = await cache.match('/index.html');
+    const shell = await cache.match(INDEX_URL);
     const html = shell ? await shell.text() : '';
-    const assets = [...html.matchAll(/(?:src|href)=["']([^"']+\.(?:js|css))["']/g)].map((match) => match[1]);
+    const assets = [...html.matchAll(/(?:src|href)=["']([^"']+\.(?:js|css))["']/g)]
+      .map((match) => new URL(match[1], APP_BASE).href);
     if (assets.length) await cache.addAll(assets);
     await self.skipWaiting();
   })());
@@ -27,9 +31,9 @@ self.addEventListener('fetch', (event) => {
   if (request.mode === 'navigate') {
     event.respondWith(fetch(request).then((response) => {
       const copy = response.clone();
-      caches.open(CACHE_NAME).then((cache) => cache.put('/index.html', copy));
+      caches.open(CACHE_NAME).then((cache) => cache.put(INDEX_URL, copy));
       return response;
-    }).catch(() => caches.match('/index.html')));
+    }).catch(() => caches.match(INDEX_URL)));
     return;
   }
 

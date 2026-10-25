@@ -47,7 +47,7 @@ import {
 const DEMO_ACCOUNT = { username: 'giaovien', password: 'timemark123' };
 const SAMPLE_PHOTO = {
   id: 'sample-photo',
-  src: '/demo-school.jpg',
+  src: `${import.meta.env.BASE_URL}demo-school.jpg`,
   name: 'san-truong-mau.jpg',
   isSample: true,
 };
@@ -266,7 +266,7 @@ function LoginScreen({ onLogin }) {
   return (
     <main className="login-page">
       <section className="login-story">
-        <img className="login-story-image" src="/demo-school.jpg" alt="Sân trường Việt Nam dưới tán cây xanh" />
+        <img className="login-story-image" src={SAMPLE_PHOTO.src} alt="Sân trường Việt Nam dưới tán cây xanh" />
         <div className="login-story-shade" />
         <div className="login-story-top">
           <Brand light />
