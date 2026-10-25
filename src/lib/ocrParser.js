@@ -1,3 +1,5 @@
+import { formatTimeToMinutes } from './timeFormat.js';
+
 const WEEKDAYS = [
   { pattern: /\bchu\s*nhat\b/, value: 'Chủ Nhật' },
   { pattern: /\bthu\s*(?:hai|2)\b/, value: 'Thứ Hai' },
@@ -94,18 +96,7 @@ function findMatch(value, patterns) {
 }
 
 function normalizeTime(value) {
-  let normalized = String(value ?? '').trim().replace(/[.]/g, ':');
-  const spacedTime = normalized.match(/^(\d{1,2})\s+(\d{2})(?:\s+(\d{2}))?(\s*[ap]\.?m\.?)?$/i);
-  if (spacedTime) {
-    normalized = [spacedTime[1], spacedTime[2], spacedTime[3]].filter(Boolean).join(':');
-    if (spacedTime[4]) normalized += ` ${spacedTime[4].trim()}`;
-  }
-  return normalized
-    .replace(/\s*:\s*/g, ':')
-    .replace(/a\.?m\.?/i, 'AM')
-    .replace(/p\.?m\.?/i, 'PM')
-    .replace(/\s+/g, ' ')
-    .trim();
+  return formatTimeToMinutes(value);
 }
 
 function cleanPunctuation(value) {

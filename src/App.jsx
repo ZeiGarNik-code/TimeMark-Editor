@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createWorker, PSM } from 'tesseract.js';
 import { parseTimemarkOCR } from './lib/ocrParser.js';
+import { formatTimeToMinutes } from './lib/timeFormat.js';
 import {
   AlignCenter,
   AlignLeft,
@@ -19,8 +20,6 @@ import {
   FileImage,
   ImagePlus,
   Info,
-  LockKeyhole,
-  LogOut,
   MapPin,
   Move,
   Pipette,
@@ -37,6 +36,7 @@ import {
   drawTimestamp,
   estimateTextMetrics,
   expandDetectedStampRegion,
+  inferStampTypography,
   fallbackForCorner,
   inpaintInk,
   inpaintInkWithOpenCV,
@@ -44,7 +44,6 @@ import {
   scanCornerText,
 } from './lib/imageProcessor.js';
 
-const DEMO_ACCOUNT = { username: 'giaovien', password: 'timemark123' };
 const SAMPLE_PHOTO = {
   id: 'sample-photo',
   src: `${import.meta.env.BASE_URL}demo-school.jpg`,
@@ -55,24 +54,33 @@ const SAMPLE_REGION = { x: 0.565, y: 0.718, w: 0.402, h: 0.226, corner: 'bottom-
 const SAMPLE_OLD_CONTENT = {
   weekday: 'Thứ Năm',
   date: '12 tháng 06, 2025',
-  time: '07:42:18',
+  time: '07:42',
   address: 'Trường THCS Trưng Vương',
 };
 const INITIAL_CONTENT = {
   weekday: 'Thứ Bảy',
   date: '24 tháng 10, 2026',
-  time: '08:35:12',
+  time: '08:35',
   address: 'Trường Tiểu học Hoa Sen',
 };
 const INITIAL_STYLE = {
   color: '#ffffff',
   fontScale: 0.028,
-  lineHeight: 1.17,
+  timeGlyphScale: 0.95,
+  detailGlyphScale: 0.36,
+  addressGlyphScale: 0.34,
+  lineHeight: 1.18,
+  detailLineHeight: 1.18,
+  addressLineHeight: 1.08,
+  detailGapRatio: 0.021,
+  addressGapRatio: 0.30,
+  textPaddingRatio: 0.036,
   align: 'left',
-  weight: 600,
-  opacity: 0.98,
+  weight: 400,
+  timeWeight: 500,
+  opacity: 1,
   shadow: true,
-  fontFamily: 'Arial, Helvetica, sans-serif',
+  fontFamily: '"Roboto Condensed", "Arial Narrow", Arial, sans-serif',
 };
 const WEB_TEST_CONTENT = {
   weekday: 'Chủ Nhật',
@@ -218,7 +226,7 @@ function getTodayContent() {
   return {
     weekday: weekdays[now.getDay()],
     date: `${now.getDate()} tháng ${now.getMonth() + 1}, ${now.getFullYear()}`,
-    time: new Intl.DateTimeFormat('vi-VN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).format(now),
+    time: new Intl.DateTimeFormat('vi-VN', { hour: '2-digit', minute: '2-digit', hour12: false }).format(now),
   };
 }
 
@@ -245,77 +253,7 @@ function Brand({ compact = false, light = false }) {
   );
 }
 
-function LoginScreen({ onLogin }) {
-  const [username, setUsername] = useState(DEMO_ACCOUNT.username);
-  const [password, setPassword] = useState(DEMO_ACCOUNT.password);
-  const [error, setError] = useState('');
-  const [showPassword, setShowPassword] = useState(false);
-  const [helpOpen, setHelpOpen] = useState(false);
-
-  const submit = (event) => {
-    event.preventDefault();
-    const accepted = username.trim().toLowerCase() === DEMO_ACCOUNT.username && password === DEMO_ACCOUNT.password;
-    if (!accepted) {
-      setError('Thông tin đăng nhập chưa đúng. Hãy dùng tài khoản thử dành cho giáo viên ở bên dưới.');
-      return;
-    }
-    setError('');
-    onLogin();
-  };
-
-  return (
-    <main className="login-page">
-      <section className="login-story">
-        <img className="login-story-image" src={SAMPLE_PHOTO.src} alt="Sân trường Việt Nam dưới tán cây xanh" />
-        <div className="login-story-shade" />
-        <div className="login-story-top">
-          <Brand light />
-          <span className="prototype-label"><span /> BẢN DÙNG THỬ</span>
-        </div>
-        <div className="login-story-copy">
-          <div className="eyebrow eyebrow-light"><Sparkles size={14} /> DÀNH RIÊNG CHO GIÁO VIÊN</div>
-          <h1>Khoảnh khắc<br />đúng <em>thời gian.</em></h1>
-          <p>Chỉnh mốc ngày giờ trên ảnh TimeMark, giữ nguyên khung hình và độ phân giải gốc.</p>
-          <div className="story-points">
-            <div><span className="story-icon"><ScanSearch size={17} /></span><span><b>Quét vùng chữ</b><small>Gợi ý góc có mốc thời gian</small></span></div>
-            <div><span className="story-icon"><ShieldCheck size={17} /></span><span><b>Ảnh ở lại trên máy</b><small>Không gửi ảnh lên máy chủ</small></span></div>
-          </div>
-        </div>
-        <div className="login-story-bottom"><span>TIME MARK EDITOR</span><span>01 / 03</span></div>
-      </section>
-
-      <section className="login-panel">
-        <div className="login-panel-top"><span>Không gian dành cho giáo viên</span><span className="login-online-dot"><i /> Có thể dùng ngoại tuyến</span></div>
-        <div className="login-form-wrap">
-          <div className="login-mobile-brand"><Brand /></div>
-          <div className="login-heading">
-            <span className="login-greeting">Chào mừng trở lại</span>
-            <h2>Đăng nhập</h2>
-            <p>Đăng nhập để mở công cụ chỉnh sửa ảnh của bạn.</p>
-          </div>
-          <form className="login-form" onSubmit={submit}>
-            <label className="field-label" htmlFor="username">Tài khoản</label>
-            <div className="login-input-wrap"><span className="login-input-icon"><LockKeyhole size={17} /></span><input id="username" autoComplete="username" value={username} onChange={(event) => setUsername(event.target.value)} placeholder="Tên tài khoản" /></div>
-            <div className="login-password-heading"><label className="field-label" htmlFor="password">Mật khẩu</label><button type="button" className="plain-link" onClick={() => { setUsername(DEMO_ACCOUNT.username); setPassword(DEMO_ACCOUNT.password); }}>Dùng tài khoản thử</button></div>
-            <div className="login-input-wrap"><span className="login-input-icon"><LockKeyhole size={17} /></span><input id="password" autoComplete="current-password" type={showPassword ? 'text' : 'password'} value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Nhập mật khẩu" /><button className="password-toggle" type="button" aria-label={showPassword ? 'Ẩn mật khẩu' : 'Hiện mật khẩu'} onClick={() => setShowPassword(!showPassword)}><Eye size={17} /></button></div>
-            {error && <p className="form-error" role="alert">{error}</p>}
-            <button className="primary-button login-submit" type="submit">Vào không gian làm việc <ArrowRight size={17} /></button>
-          </form>
-          <div className="test-account-card">
-            <div className="test-account-icon"><ImagePlus size={17} /></div>
-            <div className="test-account-copy"><strong>Tài khoản thử dành cho giáo viên</strong><span><b>giaovien</b><i>·</i><b>timemark123</b></span></div>
-            <button type="button" aria-label="Điền tài khoản thử" onClick={() => { setUsername(DEMO_ACCOUNT.username); setPassword(DEMO_ACCOUNT.password); }}><Check size={16} /></button>
-          </div>
-          <div className="login-privacy"><ShieldCheck size={15} /><span>Ảnh được xử lý ngay trong trình duyệt. Không tải lên máy chủ.</span></div>
-        </div>
-        <div className="login-panel-footer"><span>TimeMark Studio <span className="footer-version">v1.0 · prototype</span></span><button type="button" className="footer-help" onClick={() => setHelpOpen(true)}><CircleHelp size={15} /> Trợ giúp</button></div>
-        {helpOpen && <HelpModal onClose={() => setHelpOpen(false)} />}
-      </section>
-    </main>
-  );
-}
-
-function EditorHeader({ onHelp, onLogout }) {
+function EditorHeader({ onHelp }) {
   return (
     <header className="topbar">
       <div className="topbar-left">
@@ -325,12 +263,6 @@ function EditorHeader({ onHelp, onLogout }) {
       <div className="topbar-right">
         <div className="connection-pill"><span /> <span>Đang xử lý trên thiết bị</span></div>
         <button className="topbar-help" onClick={onHelp}><CircleHelp size={16} /><span>Hướng dẫn</span></button>
-        <div className="topbar-divider" />
-        <button className="user-chip" onClick={onLogout} title="Đăng xuất">
-          <span className="user-avatar">LN</span>
-          <span className="user-chip-text"><b>Lan Nguyễn</b><small>Giáo viên</small></span>
-          <ChevronDown size={15} />
-        </button>
       </div>
     </header>
   );
@@ -465,7 +397,6 @@ function HelpModal({ onClose }) {
 }
 
 function App() {
-  const [authenticated, setAuthenticated] = useState(false);
   const [photoSelection, setPhotoSelection] = useState(SAMPLE_PHOTO);
   const [photo, setPhoto] = useState(null);
   const [region, setRegion] = useState(SAMPLE_REGION);
@@ -473,6 +404,8 @@ function App() {
   const [scanData, setScanData] = useState({ confidence: 0.86, message: 'Ảnh mẫu · vùng được xác định sẵn' });
   const [content, setContent] = useState(INITIAL_CONTENT);
   const [style, setStyle] = useState(INITIAL_STYLE);
+  const [styleMatchApplied, setStyleMatchApplied] = useState(false);
+  const [fontReady, setFontReady] = useState(false);
   const [eraseColor, setEraseColor] = useState('#ffffff');
   const [eraseTolerance, setEraseTolerance] = useState(74);
   const [eraseOld, setEraseOld] = useState(true);
@@ -503,6 +436,7 @@ function App() {
   const ocrWorkerRef = useRef(null);
   const ocrRequestRef = useRef(0);
   const ocrLockRef = useRef(false);
+  const styleMatchRequestRef = useRef(0);
 
   const notify = useCallback((message) => {
     setToast(message);
@@ -518,8 +452,29 @@ function App() {
 
   useEffect(() => {
     let cancelled = false;
+    const loadLocalStampFonts = async () => {
+      try {
+        if (document.fonts?.load) {
+          await Promise.all([300, 400, 500, 700].map((weight) => document.fonts.load(
+            `${weight} 48px "Roboto Condensed"`,
+            'Thứ Năm, 24 tháng 10, 2026 · Phú Nhuận',
+          )));
+          await document.fonts.ready;
+        }
+      } catch {
+        // System fallbacks remain available if the bundled webfont cannot load.
+      }
+      if (!cancelled) setFontReady(true);
+    };
+    void loadLocalStampFonts();
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
     setPhoto(null);
     setCleanedRegion(null);
+    setStyleMatchApplied(false);
     const image = new Image();
     image.decoding = 'async';
     image.onload = () => {
@@ -642,7 +597,7 @@ function App() {
     const layout = drawTimestamp(context, region, content, style, photo.width, photo.height, cleanedRegion.divider);
     setTextScaled(layout.scaled);
     if (showGuides) drawRegionGuide(context, region, photo.width, photo.height);
-  }, [photo, region, content, style, cleanedRegion, compareOriginal, showGuides, dragBox]);
+  }, [photo, region, content, style, cleanedRegion, compareOriginal, showGuides, dragBox, fontReady]);
 
   useEffect(() => () => window.clearTimeout(toastTimerRef.current), []);
   useEffect(() => () => { void ocrWorkerRef.current?.terminate(); }, []);
@@ -778,21 +733,76 @@ function App() {
     setScanData({ confidence: 1, message: `Vị trí đã chuyển sang ${cornerName(nextCorner).toLowerCase()}` });
   };
 
-  const updateContent = (key, value) => setContent((current) => ({ ...current, [key]: value }));
-  const updateStyle = (key, value) => setStyle((current) => ({ ...current, [key]: value }));
+  const updateContent = (key, value) => setContent((current) => ({
+    ...current,
+    [key]: key === 'time' ? formatTimeToMinutes(value) : value,
+  }));
+  const updateStyle = (key, value) => setStyle((current) => ({
+    ...current,
+    [key]: value,
+    ...(key === 'lineHeight' ? { detailLineHeight: value, addressLineHeight: value } : {}),
+    ...(key === 'weight' ? { timeWeight: value } : {}),
+  }));
 
-  const matchOriginalStyle = () => {
-    if (!photo || !region) return;
+  const matchOriginalStyle = useCallback(async ({ quiet = false, automatic = false } = {}) => {
+    if (!photo || !region) return false;
+    const requestId = ++styleMatchRequestRef.current;
     try {
       const x = Math.max(0, Math.round(region.x * photo.width));
       const y = Math.max(0, Math.round(region.y * photo.height));
       const width = Math.max(1, Math.min(photo.width - x, Math.round(region.w * photo.width)));
       const height = Math.max(1, Math.min(photo.height - y, Math.round(region.h * photo.height)));
       const pixels = photo.sourceCanvas.getContext('2d', { willReadFrequently: true }).getImageData(x, y, width, height);
-      const metrics = estimateTextMetrics(pixels, parseHexColor(eraseColor));
+      const inkColor = parseHexColor(eraseColor);
+      const typography = inferStampTypography(pixels, inkColor);
+      if (typography) {
+        if (typography.fontFamily.includes('Roboto Condensed') && document.fonts?.load) {
+          try {
+            await Promise.all([...new Set([typography.weight, typography.timeWeight ?? typography.weight])].map((weight) => document.fonts.load(
+              `${weight} 48px "Roboto Condensed"`,
+              'Thứ Năm, 24 tháng 10, 2026 · Phú Nhuận',
+            )));
+            await document.fonts.ready;
+          } catch {
+            // Keep the matched geometry and let the browser use the bundled font fallback stack.
+          }
+        }
+        if (requestId !== styleMatchRequestRef.current) return false;
+        setStyle((current) => ({
+          ...current,
+          color: eraseColor,
+          fontFamily: typography.fontFamily,
+          weight: typography.weight,
+          timeWeight: typography.timeWeight,
+          fontScale: 0.028,
+          timeGlyphScale: typography.timeGlyphScale,
+          detailGlyphScale: typography.detailGlyphScale,
+          addressGlyphScale: typography.addressGlyphScale,
+          lineHeight: 1.18,
+          detailLineHeight: typography.detailLineHeight,
+          addressLineHeight: typography.addressLineHeight,
+          detailPitchScale: typography.detailPitchScale,
+          addressPitchScale: typography.addressPitchScale,
+          detailGapRatio: typography.detailGapRatio,
+          addressGapRatio: typography.addressGapRatio,
+          textPaddingRatio: typography.textPaddingRatio,
+          sourceWidths: typography.sourceWidths,
+          sourcePositions: typography.sourcePositions,
+          align: typography.align,
+          opacity: typography.opacity,
+          shadow: typography.shadow,
+        }));
+        setStyleMatchApplied(true);
+        if (!quiet) notify('Đã tự khớp font, độ đậm, cỡ chữ và khoảng cách theo gạch cam.');
+        return true;
+      }
+
+      setStyleMatchApplied(false);
+      if (automatic) return false;
+      const metrics = estimateTextMetrics(pixels, inkColor);
       if (!metrics) {
-        notify('Chưa tìm được nét chữ màu này trong vùng. Hãy lấy mẫu đúng màu chữ cũ trước.');
-        return;
+        if (!quiet) notify('Chưa tìm được nét chữ màu này trong vùng. Hãy lấy mẫu đúng màu chữ cũ trước.');
+        return false;
       }
       setStyle((current) => ({
         ...current,
@@ -801,11 +811,29 @@ function App() {
         lineHeight: metrics.lineHeight ?? current.lineHeight,
         align: metrics.align,
       }));
-      notify(`Đã khớp gần đúng màu, cỡ chữ và căn lề từ ${metrics.lineCount} dòng gốc.`);
+      if (!quiet) notify(`Đã khớp gần đúng cỡ chữ và căn lề từ ${metrics.lineCount} dòng gốc.`);
+      return true;
     } catch {
-      notify('Không phân tích được phong cách trong vùng này. Hãy kiểm tra lại khung quét.');
+      if (!quiet) notify('Không phân tích được phong cách trong vùng này. Hãy kiểm tra lại khung quét.');
+      return false;
     }
-  };
+  }, [photo, region, eraseColor, notify]);
+
+  useEffect(() => {
+    if (!photo || photo.isSample || !region) {
+      setStyleMatchApplied(false);
+      return undefined;
+    }
+    let active = true;
+    const frame = window.requestAnimationFrame(() => {
+      if (active) void matchOriginalStyle({ quiet: true, automatic: true });
+    });
+    return () => {
+      active = false;
+      window.cancelAnimationFrame(frame);
+      styleMatchRequestRef.current += 1;
+    };
+  }, [photo, region, eraseColor, matchOriginalStyle]);
 
   const handleReadOCR = async () => {
     if (!photo || !region || ocrLockRef.current) return;
@@ -979,8 +1007,6 @@ function App() {
     }
   };
 
-  if (!authenticated) return <LoginScreen onLogin={() => setAuthenticated(true)} />;
-
   return (
     <div className="app-shell">
       <aside className="sidebar">
@@ -994,19 +1020,14 @@ function App() {
         <div className="sidebar-bottom">
           <div className="privacy-card">
             <div className="privacy-card-icon"><ShieldCheck size={17} /></div>
-            <div><b>Ảnh riêng tư</b><span>Xử lý trực tiếp trên máy</span></div>
+            <div><b>Không cần tài khoản</b><span>Ảnh xử lý trực tiếp trên máy</span></div>
             <span className="privacy-status-dot" />
-          </div>
-          <div className="sidebar-profile">
-            <span className="user-avatar profile-avatar">LN</span>
-            <span className="sidebar-profile-text"><b>Lan Nguyễn</b><small>Tài khoản giáo viên</small></span>
-            <button aria-label="Đăng xuất" title="Đăng xuất" onClick={() => setAuthenticated(false)}><LogOut size={17} /></button>
           </div>
         </div>
       </aside>
 
       <main className="app-main">
-        <EditorHeader onHelp={() => setHelpOpen(true)} onLogout={() => setAuthenticated(false)} />
+        <EditorHeader onHelp={() => setHelpOpen(true)} />
         <div className="main-content">
           <div className="editor-title-row">
             <div>
@@ -1100,7 +1121,7 @@ function App() {
                     <div className="editor-field"><label htmlFor="weekday"><CalendarDays size={14} /> Thứ</label><input id="weekday" value={content.weekday} onChange={(event) => updateContent('weekday', event.target.value)} placeholder="Thứ Hai" /></div>
                     <div className="editor-field"><label htmlFor="date">Ngày</label><input id="date" value={content.date} onChange={(event) => updateContent('date', event.target.value)} placeholder="24 tháng 10, 2026" /></div>
                   </div>
-                  <div className="editor-field time-field"><label htmlFor="time"><Clock3 size={14} /> Giờ</label><div className="field-action-wrap"><input id="time" value={content.time} onChange={(event) => updateContent('time', event.target.value)} placeholder="08:30:00" /><button className="field-inline-action" onClick={useCurrentTime} title="Dùng ngày giờ hiện tại"><RotateCcw size={14} /><span>Bây giờ</span></button></div></div>
+                  <div className="editor-field time-field"><label htmlFor="time"><Clock3 size={14} /> Giờ · HH:MM</label><div className="field-action-wrap"><input id="time" type="time" step="60" value={formatTimeToMinutes(content.time)} onChange={(event) => updateContent('time', event.target.value)} aria-label="Giờ, chỉ gồm giờ và phút" /><button className="field-inline-action" onClick={useCurrentTime} title="Dùng ngày giờ hiện tại"><RotateCcw size={14} /><span>Bây giờ</span></button></div></div>
                   <div className="editor-field address-field"><label htmlFor="address"><MapPin size={14} /> Địa chỉ / địa điểm</label><input id="address" value={content.address} onChange={(event) => updateContent('address', event.target.value)} placeholder="Tên trường hoặc địa chỉ" /></div>
                 </div>
 
@@ -1149,12 +1170,13 @@ function App() {
                 <div className="inspector-divider" />
 
                 <section className="inspector-section style-section">
-                  <SectionHeading icon={SlidersHorizontal} title="Phong cách chữ" trailing={<button className="auto-style-badge style-match-button" title="Khớp gần đúng kiểu chữ gốc" onClick={matchOriginalStyle}><Sparkles size={12} /> Khớp ảnh gốc</button>} />
+                  <SectionHeading icon={SlidersHorizontal} title="Phong cách chữ" trailing={<button className="auto-style-badge style-match-button" title={styleMatchApplied ? 'Phân tích lại kiểu chữ từ ảnh gốc' : 'Tự động phân tích khi phát hiện gạch cam'} onClick={() => { void matchOriginalStyle(); }}><Sparkles size={12} /> {styleMatchApplied ? 'Khớp lại' : 'Khớp ảnh gốc'}</button>} />
+                  {styleMatchApplied && <div className="style-match-note"><Sparkles size={13} /> Tự chọn font, độ đậm, cỡ và giãn dòng theo gạch cam.</div>}
                   <div className="style-color-row">
                     <div className="style-color-label"><span className="color-swatch" style={{ background: style.color }} /><span><b>Màu chữ mới</b><small>Áp dụng cho 4 dòng</small></span></div>
                     <label className="color-picker" title="Chọn màu chữ mới"><input type="color" value={style.color} onChange={(event) => updateStyle('color', event.target.value)} /><span>{style.color.toUpperCase()}</span><ChevronDown size={13} /></label>
                   </div>
-                  <RangeControl label="Kích thước chữ" min={0.016} max={0.046} step={0.001} value={style.fontScale} onChange={(value) => updateStyle('fontScale', value)} display={photo ? `${Math.round(style.fontScale * photo.height)} px` : '— px'} hint="Kích thước tính theo ảnh gốc." />
+                  <RangeControl label="Tỉ lệ cỡ chữ" min={0.016} max={0.046} step={0.001} value={style.fontScale} onChange={(value) => updateStyle('fontScale', value)} display={`${Math.round(style.fontScale / 0.028 * 100)}%`} hint="Từng trường được tự tính riêng; thanh này phóng to/thu nhỏ toàn bộ." />
                   <RangeControl label="Khoảng cách dòng" min={1.0} max={1.5} step={0.01} value={style.lineHeight} onChange={(value) => updateStyle('lineHeight', value)} display={`${style.lineHeight.toFixed(2)}×`} />
                   <div className="style-options-row">
                     <div className="align-picker" aria-label="Căn lề chữ">
@@ -1162,7 +1184,7 @@ function App() {
                       <button className={style.align === 'center' ? 'selected' : ''} onClick={() => updateStyle('align', 'center')} aria-label="Căn giữa"><AlignCenter size={15} /></button>
                       <button className={style.align === 'right' ? 'selected' : ''} onClick={() => updateStyle('align', 'right')} aria-label="Căn phải"><AlignRight size={15} /></button>
                     </div>
-                    <button className={`text-style-chip ${style.weight >= 700 ? 'chip-selected' : ''}`} onClick={() => updateStyle('weight', style.weight >= 700 ? 600 : 700)}><b>B</b> Đậm</button>
+                    <button className={`text-style-chip ${style.weight >= 700 ? 'chip-selected' : ''}`} onClick={() => updateStyle('weight', style.weight >= 700 ? 400 : 700)}><b>B</b> Đậm</button>
                     <button className={`text-style-chip ${style.shadow ? 'chip-selected' : ''}`} onClick={() => updateStyle('shadow', !style.shadow)}><span className="shadow-aa">Aa</span> Bóng</button>
                   </div>
                   <RangeControl label="Độ đậm màu" min={0.45} max={1} step={0.01} value={style.opacity} onChange={(value) => updateStyle('opacity', value)} display={`${Math.round(style.opacity * 100)}%`} />
