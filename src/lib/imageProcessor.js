@@ -473,9 +473,9 @@ export function inferStampTypography(imageData, inkColor = { r: 255, g: 255, b: 
     fontFamily: timeAspectRatio <= 2.45
       ? '"Roboto Condensed", "Arial Narrow", Arial, sans-serif'
       : 'Arial, Helvetica, sans-serif',
-    // Light TimeMark strokes must not be promoted to bold just because a
-    // compressed photo or high-contrast background adds pixels inside a row.
-    weight: inkCoverage < 0.21 ? 300 : inkCoverage < 0.29 ? 400 : 700,
+    // The photo sample's time line is slightly heavier than its fine-print
+    // rows. Keep the default at regular instead of making the whole stamp bold.
+    weight: inkCoverage < 0.12 ? 300 : inkCoverage < 0.29 ? 400 : 700,
     timeGlyphScale: clamp(timeLine.height / divider.h, 0.55, 1.25),
     detailGlyphScale: clamp(detailGlyphHeight / divider.h, 0.18, 0.68),
     addressGlyphScale: clamp(addressGlyphHeight / divider.h, 0.18, 0.68),
@@ -500,6 +500,9 @@ export function inferStampTypography(imageData, inkColor = { r: 255, g: 255, b: 
       date: dateLine?.width ?? null,
       weekday: weekdayLine?.width ?? null,
       address: addressLines.map((line) => line.width),
+    },
+    sourcePositions: {
+      timeX: timeLine.x,
     },
     metrics: {
       time: timeLine,
@@ -836,9 +839,19 @@ function drawTimestampAroundDivider(ctx, region, content, style, canvasWidth, ca
   const paddingX = Math.max(5, w * (style.textPaddingRatio ?? 0.035));
   const paddingY = Math.max(4, h * 0.075);
   const timeSize = fontSizeForGlyphHeight(ctx, timeText || timeSample, fontFamily, weight, timeGlyphHeight);
+  ctx.font = `${weight} ${timeSize}px ${fontFamily}`;
+  const timeWidthMetrics = ctx.measureText(timeText || timeSample);
+  const timeInkWidth = measuredInkWidth(timeWidthMetrics);
+  const timeWidthScale = Number.isFinite(sourceWidths.time)
+    ? clamp(sourceWidths.time / Math.max(1, timeInkWidth), 0.65, 1.4)
+    : 1;
+  const sourceTimeX = Number.isFinite(style.sourcePositions?.timeX) ? style.sourcePositions.timeX : null;
+  const timeBearing = Number.isFinite(Number(timeWidthMetrics.actualBoundingBoxLeft))
+    ? Math.abs(Number(timeWidthMetrics.actualBoundingBoxLeft)) * timeWidthScale
+    : 0;
+  const timeX = sourceTimeX === null ? x + paddingX : x + sourceTimeX - timeBearing;
   const detailSize = fontSizeForGlyphHeight(ctx, detailSample, fontFamily, weight, detailGlyphHeight);
   const addressSize = fontSizeForGlyphHeight(ctx, addressSample, fontFamily, weight, addressGlyphHeight);
-  const timeWidthScale = sourceWidthScale(ctx, timeSample, sourceWidths.time, fontFamily, weight, timeSize);
   const dateWidthScale = sourceWidthScale(ctx, detailSample, sourceWidths.date, fontFamily, weight, detailSize);
   const weekdayWidthScale = sourceWidthScale(ctx, weekdaySample, sourceWidths.weekday, fontFamily, weight, detailSize);
   const addressWidthScaleForSize = (fontSize, index = 0) => sourceWidthScale(
@@ -849,7 +862,6 @@ function drawTimestampAroundDivider(ctx, region, content, style, canvasWidth, ca
     weight,
     fontSize,
   );
-  const timeX = x + paddingX;
   const timeWidth = Math.max(1, dividerX - timeX - Math.max(4, w * 0.01));
   const detailGap = Math.max(4, w * (style.detailGapRatio ?? 0.018));
   const detailX = dividerX + dividerWidth + detailGap;
@@ -934,6 +946,15 @@ function fontSizeForGlyphHeight(ctx, text, family, weight, targetHeight) {
   return Number.isFinite(measuredHeight) && measuredHeight > 0
     ? safeHeight * 100 / measuredHeight
     : safeHeight / 0.70;
+}
+
+function measuredInkWidth(metrics) {
+  const left = Math.abs(Number(metrics?.actualBoundingBoxLeft));
+  const right = Number(metrics?.actualBoundingBoxRight);
+  const inkWidth = right - left;
+  if (Number.isFinite(inkWidth) && inkWidth > 0) return inkWidth;
+  const advanceWidth = Number(metrics?.width);
+  return Number.isFinite(advanceWidth) && advanceWidth > 0 ? advanceWidth : 1;
 }
 
 function getTextVerticalMetrics(ctx, text, family, weight, fontSize) {

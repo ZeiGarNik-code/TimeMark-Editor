@@ -79,7 +79,7 @@ const INITIAL_STYLE = {
   addressGapRatio: 0.30,
   textPaddingRatio: 0.036,
   align: 'left',
-  weight: 300,
+  weight: 400,
   opacity: 1,
   shadow: true,
   fontFamily: '"Roboto Condensed", "Arial Narrow", Arial, sans-serif',
@@ -861,6 +861,7 @@ function App() {
           addressGapRatio: typography.addressGapRatio,
           textPaddingRatio: typography.textPaddingRatio,
           sourceWidths: typography.sourceWidths,
+          sourcePositions: typography.sourcePositions,
           align: typography.align,
           opacity: typography.opacity,
           shadow: typography.shadow,
@@ -1264,7 +1265,7 @@ function App() {
                       <button className={style.align === 'center' ? 'selected' : ''} onClick={() => updateStyle('align', 'center')} aria-label="Căn giữa"><AlignCenter size={15} /></button>
                       <button className={style.align === 'right' ? 'selected' : ''} onClick={() => updateStyle('align', 'right')} aria-label="Căn phải"><AlignRight size={15} /></button>
                     </div>
-                    <button className={`text-style-chip ${style.weight >= 700 ? 'chip-selected' : ''}`} onClick={() => updateStyle('weight', style.weight >= 700 ? 300 : 700)}><b>B</b> Đậm</button>
+                    <button className={`text-style-chip ${style.weight >= 700 ? 'chip-selected' : ''}`} onClick={() => updateStyle('weight', style.weight >= 700 ? 400 : 700)}><b>B</b> Đậm</button>
                     <button className={`text-style-chip ${style.shadow ? 'chip-selected' : ''}`} onClick={() => updateStyle('shadow', !style.shadow)}><span className="shadow-aa">Aa</span> Bóng</button>
                   </div>
                   <RangeControl label="Độ đậm màu" min={0.45} max={1} step={0.01} value={style.opacity} onChange={(value) => updateStyle('opacity', value)} display={`${Math.round(style.opacity * 100)}%`} />
