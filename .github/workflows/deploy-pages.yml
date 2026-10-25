@@ -4,7 +4,7 @@ on:
   push:
     branches:
       - main
-      - arena/e6f73850-timemark-editor
+      - arena/c6b57be1-timemark-editor
   workflow_dispatch:
 
 permissions:
