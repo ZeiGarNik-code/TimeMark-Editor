@@ -1,4 +1,4 @@
-const CACHE_NAME = 'timemark-studio-v2';
+const CACHE_NAME = 'timemark-studio-v3';
 const APP_BASE = new URL('.', self.registration.scope);
 const appUrl = (path = '') => new URL(path, APP_BASE).href;
 const INDEX_URL = appUrl('index.html');

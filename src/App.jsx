@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createWorker, PSM } from 'tesseract.js';
 import { parseTimemarkOCR } from './lib/ocrParser.js';
+import { formatTimeToMinutes } from './lib/timeFormat.js';
 import {
   AlignCenter,
   AlignLeft,
@@ -56,13 +57,13 @@ const SAMPLE_REGION = { x: 0.565, y: 0.718, w: 0.402, h: 0.226, corner: 'bottom-
 const SAMPLE_OLD_CONTENT = {
   weekday: 'Thứ Năm',
   date: '12 tháng 06, 2025',
-  time: '07:42:18',
+  time: '07:42',
   address: 'Trường THCS Trưng Vương',
 };
 const INITIAL_CONTENT = {
   weekday: 'Thứ Bảy',
   date: '24 tháng 10, 2026',
-  time: '08:35:12',
+  time: '08:35',
   address: 'Trường Tiểu học Hoa Sen',
 };
 const INITIAL_STYLE = {
@@ -79,7 +80,7 @@ const INITIAL_STYLE = {
   textPaddingRatio: 0.036,
   align: 'left',
   weight: 300,
-  opacity: 0.98,
+  opacity: 1,
   shadow: true,
   fontFamily: '"Roboto Condensed", "Arial Narrow", Arial, sans-serif',
 };
@@ -227,7 +228,7 @@ function getTodayContent() {
   return {
     weekday: weekdays[now.getDay()],
     date: `${now.getDate()} tháng ${now.getMonth() + 1}, ${now.getFullYear()}`,
-    time: new Intl.DateTimeFormat('vi-VN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).format(now),
+    time: new Intl.DateTimeFormat('vi-VN', { hour: '2-digit', minute: '2-digit', hour12: false }).format(now),
   };
 }
 
@@ -811,7 +812,10 @@ function App() {
     setScanData({ confidence: 1, message: `Vị trí đã chuyển sang ${cornerName(nextCorner).toLowerCase()}` });
   };
 
-  const updateContent = (key, value) => setContent((current) => ({ ...current, [key]: value }));
+  const updateContent = (key, value) => setContent((current) => ({
+    ...current,
+    [key]: key === 'time' ? formatTimeToMinutes(value) : value,
+  }));
   const updateStyle = (key, value) => setStyle((current) => ({
     ...current,
     [key]: value,
@@ -1197,7 +1201,7 @@ function App() {
                     <div className="editor-field"><label htmlFor="weekday"><CalendarDays size={14} /> Thứ</label><input id="weekday" value={content.weekday} onChange={(event) => updateContent('weekday', event.target.value)} placeholder="Thứ Hai" /></div>
                     <div className="editor-field"><label htmlFor="date">Ngày</label><input id="date" value={content.date} onChange={(event) => updateContent('date', event.target.value)} placeholder="24 tháng 10, 2026" /></div>
                   </div>
-                  <div className="editor-field time-field"><label htmlFor="time"><Clock3 size={14} /> Giờ</label><div className="field-action-wrap"><input id="time" value={content.time} onChange={(event) => updateContent('time', event.target.value)} placeholder="08:30:00" /><button className="field-inline-action" onClick={useCurrentTime} title="Dùng ngày giờ hiện tại"><RotateCcw size={14} /><span>Bây giờ</span></button></div></div>
+                  <div className="editor-field time-field"><label htmlFor="time"><Clock3 size={14} /> Giờ · HH:MM</label><div className="field-action-wrap"><input id="time" type="time" step="60" value={formatTimeToMinutes(content.time)} onChange={(event) => updateContent('time', event.target.value)} aria-label="Giờ, chỉ gồm giờ và phút" /><button className="field-inline-action" onClick={useCurrentTime} title="Dùng ngày giờ hiện tại"><RotateCcw size={14} /><span>Bây giờ</span></button></div></div>
                   <div className="editor-field address-field"><label htmlFor="address"><MapPin size={14} /> Địa chỉ / địa điểm</label><input id="address" value={content.address} onChange={(event) => updateContent('address', event.target.value)} placeholder="Tên trường hoặc địa chỉ" /></div>
                 </div>
 

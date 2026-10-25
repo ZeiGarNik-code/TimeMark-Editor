@@ -7,7 +7,7 @@ test('OCR parser extracts Vietnamese weekday, date, time, and multi-line locatio
   assert.deepEqual(parsed.content, {
     weekday: 'Thứ Bảy',
     date: '24 tháng 10, 2026',
-    time: '08:35:12',
+    time: '08:35',
     address: 'Trường Tiểu học Hoa Sen · Hòa Khánh, Đà Nẵng',
   });
   assert.equal(parsed.recognizedCount, 4);
@@ -17,7 +17,7 @@ test('OCR parser accepts numeric date/time and a plain English address', () => {
   const parsed = parseTimemarkOCR('Thu 2 24/10/2026\n8.05 AM\nNguyen Du Elementary School');
   assert.equal(parsed.content.weekday, 'Thứ Hai');
   assert.equal(parsed.content.date, '24/10/2026');
-  assert.equal(parsed.content.time, '8:05 AM');
+  assert.equal(parsed.content.time, '08:05');
   assert.equal(parsed.content.address, 'Nguyen Du Elementary School');
 });
 
@@ -25,7 +25,7 @@ test('OCR parser translates an English weekday and reads an English month date',
   const parsed = parseTimemarkOCR('Saturday, October 24, 2026\n8:30 AM\nNguyen Du School, Da Nang');
   assert.equal(parsed.content.weekday, 'Thứ Bảy');
   assert.equal(parsed.content.date, 'October 24, 2026');
-  assert.equal(parsed.content.time, '8:30 AM');
+  assert.equal(parsed.content.time, '08:30');
   assert.equal(parsed.content.address, 'Nguyen Du School, Da Nang');
 });
 

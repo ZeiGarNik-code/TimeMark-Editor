@@ -113,15 +113,53 @@ test('automatic typography inference uses divider-relative bands for date and we
   assert.ok(Math.abs(inferred.detailGlyphScale - 25 / 60) < 0.03);
   assert.ok(Math.abs(inferred.detailPitchScale - 35 / 60) < 0.03);
   assert.ok(Math.abs(inferred.detailGapRatio - 0.02) < 0.01);
+  assert.equal(inferred.opacity, 1);
   assert.equal(inferred.metrics.address.length, 2);
   assert.ok(inferred.detailLineHeight >= 1 && inferred.detailLineHeight <= 1.8);
+});
+
+test('light timestamp strokes keep the thin 300 font weight despite JPEG-like coverage variation', () => {
+  const source = imageData(400, 180);
+  const paintRect = (x, y, width, height, color = [245, 245, 245, 255]) => {
+    for (let row = y; row < y + height; row += 1) {
+      for (let column = x; column < x + width; column += 1) {
+        source.data.set(color, (row * source.width + column) * 4);
+      }
+    }
+  };
+  const paintGlyphs = (x, y, width, height, count) => {
+    const glyphWidth = width / count;
+    for (let index = 0; index < count; index += 1) {
+      const glyphX = Math.round(x + index * glyphWidth + 1);
+      const glyphY = y + 1;
+      paintRect(glyphX, glyphY, 1, height - 2);
+      if (index % 2 === 0) {
+        const verticalStart = index % 3 === 0 ? glyphY : glyphY + Math.round(height * 0.35);
+        const verticalHeight = index % 3 === 0 ? height - 2 : Math.round(height * 0.65);
+        paintRect(glyphX + Math.max(2, Math.round(glyphWidth * 0.45)), verticalStart, 1, verticalHeight);
+      }
+      if (index % 3 === 0) paintRect(glyphX, glyphY + Math.round(height * 0.45), Math.max(2, Math.round(glyphWidth * 0.4)), 1);
+    }
+  };
+
+  paintRect(100, 20, 4, 60, [227, 179, 78, 255]);
+  paintGlyphs(10, 22, 70, 56, 5);
+  paintGlyphs(112, 23, 138, 22, 18);
+  paintGlyphs(112, 58, 78, 20, 8);
+  paintGlyphs(10, 96, 340, 22, 35);
+  paintGlyphs(10, 126, 100, 19, 12);
+
+  const inferred = inferStampTypography(source);
+  assert.ok(inferred);
+  assert.ok(inferred.metrics.inkCoverage > 0.15 && inferred.metrics.inkCoverage < 0.21);
+  assert.equal(inferred.weight, 300);
 });
 
 test('automatic typography inference declines to guess without the orange divider', () => {
   assert.equal(inferStampTypography(imageData(180, 100)), null);
 });
 
-test('timestamp text stays aligned to the detected original divider', () => {
+test('timestamp text stays aligned to the detected original divider and drops seconds', () => {
   const operations = [];
   const context = {
     font: '',
@@ -137,7 +175,7 @@ test('timestamp text stays aligned to the detected original divider', () => {
   const region = { x: 0, y: 0.82, w: 0.76, h: 0.18 };
   const divider = { x: 224, y: 26, w: 8, h: 90, color: { r: 240, g: 180, b: 50 } };
   const result = drawTimestamp(context, region, {
-    time: '08:35', date: '25 Tháng 10, 2026', weekday: 'Chủ Nhật', address: 'Chợ Bến Thành, Quận 1',
+    time: '08:35:12', date: '25 Tháng 10, 2026', weekday: 'Chủ Nhật', address: 'Chợ Bến Thành, Quận 1',
   }, {
     color: '#ffffff', fontScale: 0.028, lineHeight: 1.17, align: 'left', weight: 600, opacity: 0.98,
     shadow: true, fontFamily: 'Arial, sans-serif',
@@ -149,6 +187,7 @@ test('timestamp text stays aligned to the detected original divider', () => {
   const address = operations.find((operation) => operation.type === 'text' && operation.text.startsWith('Chợ'));
   assert.equal(result.anchoredToDivider, true);
   assert.equal(marker.x, 224);
+  assert.ok(time);
   assert.ok(time.x + time.maxWidth <= marker.x);
   assert.ok(date.x > marker.x + marker.width);
   assert.ok(weekday.x > marker.x + marker.width);

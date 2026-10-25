@@ -1,3 +1,5 @@
+import { formatTimeToMinutes } from './timeFormat.js';
+
 const CORNERS = ['top-left', 'top-right', 'bottom-left', 'bottom-right'];
 
 export const DEFAULT_REGION = { x: 0.56, y: 0.70, w: 0.40, h: 0.25, corner: 'bottom-right' };
@@ -471,7 +473,9 @@ export function inferStampTypography(imageData, inkColor = { r: 255, g: 255, b: 
     fontFamily: timeAspectRatio <= 2.45
       ? '"Roboto Condensed", "Arial Narrow", Arial, sans-serif'
       : 'Arial, Helvetica, sans-serif',
-    weight: inkCoverage < 0.16 ? 300 : inkCoverage < 0.23 ? 400 : 700,
+    // Light TimeMark strokes must not be promoted to bold just because a
+    // compressed photo or high-contrast background adds pixels inside a row.
+    weight: inkCoverage < 0.21 ? 300 : inkCoverage < 0.29 ? 400 : 700,
     timeGlyphScale: clamp(timeLine.height / divider.h, 0.55, 1.25),
     detailGlyphScale: clamp(detailGlyphHeight / divider.h, 0.18, 0.68),
     addressGlyphScale: clamp(addressGlyphHeight / divider.h, 0.18, 0.68),
@@ -489,7 +493,7 @@ export function inferStampTypography(imageData, inkColor = { r: 255, g: 255, b: 
       : 0.30,
     textPaddingRatio: clamp(textPaddingRatio, 0.01, 0.10),
     align: 'left',
-    opacity: 0.98,
+    opacity: 1,
     shadow: true,
     sourceWidths: {
       time: timeLine.width,
@@ -762,10 +766,12 @@ export function drawTimestamp(ctx, region, content, style, canvasWidth, canvasHe
   const y = Math.round(region.y * canvasHeight);
   const w = Math.round(region.w * canvasWidth);
   const h = Math.round(region.h * canvasHeight);
-  const lines = [content.weekday, content.date, content.time, content.address].filter((line) => String(line ?? '').trim().length > 0);
+  const normalizedContent = { ...(content ?? {}), time: formatTimeToMinutes(content?.time) };
+  const lines = [normalizedContent.weekday, normalizedContent.date, normalizedContent.time, normalizedContent.address]
+    .filter((line) => String(line ?? '').trim().length > 0);
   if (!lines.length || w < 1 || h < 1) return { fontSize: 0, scaled: false };
-  if (stampLayout && (content.time || content.date || content.weekday)) {
-    return drawTimestampAroundDivider(ctx, region, content, style, canvasWidth, canvasHeight, stampLayout);
+  if (stampLayout && (normalizedContent.time || normalizedContent.date || normalizedContent.weekday)) {
+    return drawTimestampAroundDivider(ctx, region, normalizedContent, style, canvasWidth, canvasHeight, stampLayout);
   }
 
   const paddingX = Math.max(5, w * 0.035);
