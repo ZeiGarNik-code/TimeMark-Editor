@@ -31,6 +31,7 @@ import {
   SlidersHorizontal,
   Sparkles,
   Upload,
+  Users,
   X,
 } from 'lucide-react';
 import {
@@ -46,7 +47,7 @@ import {
   scanCornerText,
 } from './lib/imageProcessor.js';
 
-const DEMO_ACCOUNT = { username: 'giaovien', password: 'timemark123' };
+const LOCAL_DEMO_ACCOUNT = { username: 'giaovien', password: 'timemark123' };
 const SAMPLE_PHOTO = {
   id: 'sample-photo',
   src: `${import.meta.env.BASE_URL}demo-school.jpg`,
@@ -256,23 +257,53 @@ function Brand({ compact = false, light = false }) {
   );
 }
 
-function LoginScreen({ onLogin }) {
-  const [username, setUsername] = useState(DEMO_ACCOUNT.username);
-  const [password, setPassword] = useState(DEMO_ACCOUNT.password);
+function LoginScreen({ onLogin, onSetupCompleted, status }) {
+  const isSetup = Boolean(status?.setupRequired);
+  const [username, setUsername] = useState('');
+  const [displayName, setDisplayName] = useState('');
+  const [password, setPassword] = useState('');
+  const [setupToken, setSetupToken] = useState('');
   const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
 
-  const submit = (event) => {
+  const submit = async (event) => {
     event.preventDefault();
-    const accepted = username.trim().toLowerCase() === DEMO_ACCOUNT.username && password === DEMO_ACCOUNT.password;
-    if (!accepted) {
-      setError('Thông tin đăng nhập chưa đúng. Hãy dùng tài khoản thử dành cho giáo viên ở bên dưới.');
+    setError('');
+    if (import.meta.env.DEV && status?.databaseReady === false) {
+      if (username.trim().toLowerCase() === LOCAL_DEMO_ACCOUNT.username && password === LOCAL_DEMO_ACCOUNT.password) {
+        onLogin({ id: 0, username: LOCAL_DEMO_ACCOUNT.username, displayName: 'Giáo viên thử', role: 'member', mustChangePassword: false });
+      } else {
+        setError('Ở chế độ phát triển, hãy dùng tài khoản demo cục bộ.');
+      }
       return;
     }
-    setError('');
-    onLogin();
+    setBusy(true);
+    try {
+      const response = await fetch(isSetup ? '/api/auth/setup' : '/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify(isSetup
+          ? { token: setupToken, username, displayName, password }
+          : { username, password }),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.error || 'Không thể hoàn tất yêu cầu.');
+      setPassword('');
+      if (isSetup) onSetupCompleted(result.user, result.childAccounts);
+      else onLogin(result.user);
+    } catch (requestError) {
+      setError(requestError.message || 'Không thể kết nối máy chủ đăng nhập.');
+    } finally {
+      setBusy(false);
+    }
   };
+
+  const localDemoAvailable = import.meta.env.DEV && status?.databaseReady === false;
+  const unavailable = status?.databaseReady === false && !import.meta.env.DEV;
+  const setupTokenMissing = isSetup && status?.setupTokenConfigured === false;
 
   return (
     <main className="login-page">
@@ -296,28 +327,41 @@ function LoginScreen({ onLogin }) {
       </section>
 
       <section className="login-panel">
-        <div className="login-panel-top"><span>Không gian dành cho giáo viên</span><span className="login-online-dot"><i /> Có thể dùng ngoại tuyến</span></div>
+        <div className="login-panel-top"><span>Không gian dành cho giáo viên</span><span className="login-online-dot"><i /> Cần mạng để đăng nhập</span></div>
         <div className="login-form-wrap">
           <div className="login-mobile-brand"><Brand /></div>
           <div className="login-heading">
-            <span className="login-greeting">Chào mừng trở lại</span>
-            <h2>Đăng nhập</h2>
-            <p>Đăng nhập để mở công cụ chỉnh sửa ảnh của bạn.</p>
+            <span className="login-greeting">{isSetup ? 'Thiết lập lần đầu' : 'Chào mừng trở lại'}</span>
+            <h2>{isSetup ? 'Tạo tài khoản admin' : 'Đăng nhập'}</h2>
+            <p>{isSetup ? 'Tạo admin, 10 tài khoản con và một tài khoản giáo viên thử.' : 'Đăng nhập để mở công cụ chỉnh sửa ảnh của bạn.'}</p>
           </div>
-          <form className="login-form" onSubmit={submit}>
-            <label className="field-label" htmlFor="username">Tài khoản</label>
-            <div className="login-input-wrap"><span className="login-input-icon"><LockKeyhole size={17} /></span><input id="username" autoComplete="username" value={username} onChange={(event) => setUsername(event.target.value)} placeholder="Tên tài khoản" /></div>
-            <div className="login-password-heading"><label className="field-label" htmlFor="password">Mật khẩu</label><button type="button" className="plain-link" onClick={() => { setUsername(DEMO_ACCOUNT.username); setPassword(DEMO_ACCOUNT.password); }}>Dùng tài khoản thử</button></div>
-            <div className="login-input-wrap"><span className="login-input-icon"><LockKeyhole size={17} /></span><input id="password" autoComplete="current-password" type={showPassword ? 'text' : 'password'} value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Nhập mật khẩu" /><button className="password-toggle" type="button" aria-label={showPassword ? 'Ẩn mật khẩu' : 'Hiện mật khẩu'} onClick={() => setShowPassword(!showPassword)}><Eye size={17} /></button></div>
-            {error && <p className="form-error" role="alert">{error}</p>}
-            <button className="primary-button login-submit" type="submit">Vào không gian làm việc <ArrowRight size={17} /></button>
-          </form>
-          <div className="test-account-card">
+          {status?.loading && <p className="form-error" role="status">Đang kiểm tra kết nối tài khoản…</p>}
+          {unavailable && <p className="form-error" role="alert">{status?.error || 'Chưa kết nối được cơ sở dữ liệu. Hãy thử tải lại trang.'}</p>}
+          {setupTokenMissing && !unavailable && <p className="form-error" role="alert">Cần thêm biến bí mật TIMEMARK_ADMIN_SETUP_TOKEN trong Vercel rồi triển khai lại trước khi khởi tạo admin.</p>}
+          {!unavailable && !status?.loading && (
+            <form className="login-form" onSubmit={submit}>
+              {isSetup && <>
+                <label className="field-label" htmlFor="setup-token">Mã khởi tạo admin</label>
+                <div className="login-input-wrap"><span className="login-input-icon"><LockKeyhole size={17} /></span><input id="setup-token" type="password" autoComplete="off" value={setupToken} onChange={(event) => setSetupToken(event.target.value)} placeholder="Mã bí mật từ Vercel" required /></div>
+                <label className="field-label" htmlFor="admin-display-name">Tên hiển thị admin</label>
+                <div className="login-input-wrap"><span className="login-input-icon"><LockKeyhole size={17} /></span><input id="admin-display-name" autoComplete="name" value={displayName} onChange={(event) => setDisplayName(event.target.value)} placeholder="Tên của bạn" required /></div>
+              </>}
+              <label className="field-label" htmlFor="username">Tài khoản</label>
+              <div className="login-input-wrap"><span className="login-input-icon"><LockKeyhole size={17} /></span><input id="username" autoComplete="username" value={username} onChange={(event) => setUsername(event.target.value)} placeholder={isSetup ? 'Tên admin' : 'Tên tài khoản'} required /></div>
+              <label className="field-label" htmlFor="password">{isSetup ? 'Mật khẩu admin (ít nhất 12 ký tự)' : 'Mật khẩu'}</label>
+              <div className="login-input-wrap"><span className="login-input-icon"><LockKeyhole size={17} /></span><input id="password" autoComplete={isSetup ? 'new-password' : 'current-password'} type={showPassword ? 'text' : 'password'} value={password} onChange={(event) => setPassword(event.target.value)} placeholder={isSetup ? 'Tự đặt mật khẩu riêng' : 'Nhập mật khẩu'} required /><button className="password-toggle" type="button" aria-label={showPassword ? 'Ẩn mật khẩu' : 'Hiện mật khẩu'} onClick={() => setShowPassword(!showPassword)}><Eye size={17} /></button></div>
+              {error && <p className="form-error" role="alert">{error}</p>}
+              <button className="primary-button login-submit" type="submit" disabled={busy || unavailable || setupTokenMissing}>
+                {busy ? 'Đang xử lý…' : isSetup ? 'Khởi tạo admin và tài khoản con' : 'Vào không gian làm việc'} <ArrowRight size={17} />
+              </button>
+            </form>
+          )}
+          {localDemoAvailable && <div className="test-account-card">
             <div className="test-account-icon"><ImagePlus size={17} /></div>
-            <div className="test-account-copy"><strong>Tài khoản thử dành cho giáo viên</strong><span><b>giaovien</b><i>·</i><b>timemark123</b></span></div>
-            <button type="button" aria-label="Điền tài khoản thử" onClick={() => { setUsername(DEMO_ACCOUNT.username); setPassword(DEMO_ACCOUNT.password); }}><Check size={16} /></button>
-          </div>
-          <div className="login-privacy"><ShieldCheck size={15} /><span>Ảnh được xử lý ngay trong trình duyệt. Không tải lên máy chủ.</span></div>
+            <div className="test-account-copy"><strong>Demo chỉ có trong môi trường phát triển</strong><span><b>giaovien</b><i>·</i><b>timemark123</b></span></div>
+            <button type="button" aria-label="Điền tài khoản demo cục bộ" onClick={() => { setUsername(LOCAL_DEMO_ACCOUNT.username); setPassword(LOCAL_DEMO_ACCOUNT.password); }}><Check size={16} /></button>
+          </div>}
+          <div className="login-privacy"><ShieldCheck size={15} /><span>Mật khẩu được băm ở máy chủ; ảnh vẫn được xử lý ngay trên thiết bị.</span></div>
         </div>
         <div className="login-panel-footer"><span>TimeMark Studio <span className="footer-version">v1.0 · prototype</span></span><button type="button" className="footer-help" onClick={() => setHelpOpen(true)}><CircleHelp size={15} /> Trợ giúp</button></div>
         {helpOpen && <HelpModal onClose={() => setHelpOpen(false)} />}
@@ -326,7 +370,18 @@ function LoginScreen({ onLogin }) {
   );
 }
 
-function EditorHeader({ onHelp, onLogout }) {
+function accountInitials(user) {
+  return String(user?.displayName || user?.username || 'TM')
+    .trim().split(/\s+/).slice(0, 2).map((part) => part[0] || '').join('').toUpperCase();
+}
+
+function accountRoleLabel(user) {
+  if (user?.role === 'admin') return 'Quản trị viên';
+  if (user?.username === 'giaovien') return 'Tài khoản giáo viên thử';
+  return 'Tài khoản con';
+}
+
+function EditorHeader({ onHelp, onLogout, onManageAccounts, user }) {
   return (
     <header className="topbar">
       <div className="topbar-left">
@@ -335,15 +390,215 @@ function EditorHeader({ onHelp, onLogout }) {
       </div>
       <div className="topbar-right">
         <div className="connection-pill"><span /> <span>Đang xử lý trên thiết bị</span></div>
+        {user?.role === 'admin' && <button className="topbar-help admin-manage-button" onClick={onManageAccounts}><Users size={16} /><span>Tài khoản</span></button>}
         <button className="topbar-help" onClick={onHelp}><CircleHelp size={16} /><span>Hướng dẫn</span></button>
         <div className="topbar-divider" />
         <button className="user-chip" onClick={onLogout} title="Đăng xuất">
-          <span className="user-avatar">LN</span>
-          <span className="user-chip-text"><b>Lan Nguyễn</b><small>Giáo viên</small></span>
+          <span className="user-avatar">{accountInitials(user)}</span>
+          <span className="user-chip-text"><b>{user?.displayName || user?.username}</b><small>{accountRoleLabel(user)}</small></span>
           <ChevronDown size={15} />
         </button>
       </div>
     </header>
+  );
+}
+
+function CredentialsModal({ accounts, onClose, title = 'Lưu thông tin tài khoản' }) {
+  const [message, setMessage] = useState('');
+  const rows = Array.isArray(accounts) ? accounts : [];
+  const csv = ['username,display_name,temporary_password', ...rows.map((account) => [account.username, account.displayName, account.temporaryPassword].map((value) => `"${String(value ?? '').replaceAll('"', '""')}"`).join(','))].join('\n');
+  const text = rows.map((account) => `${account.displayName} — ${account.username} — ${account.temporaryPassword}`).join('\n');
+
+  const download = () => {
+    const blob = new Blob([`\uFEFF${csv}`], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = 'timemark-account-credentials.csv';
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    setMessage('Đã tải danh sách tài khoản. Hãy lưu tệp ở nơi an toàn.');
+  };
+
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setMessage('Đã sao chép danh sách. Hãy lưu ở nơi an toàn.');
+    } catch {
+      setMessage('Không thể sao chép tự động; hãy tải tệp CSV.');
+    }
+  };
+
+  return (
+    <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+      <section className="help-modal credentials-modal" role="dialog" aria-modal="true" aria-labelledby="credentials-title">
+        <button className="modal-close" onClick={onClose} aria-label="Đóng"><X size={19} /></button>
+        <div className="modal-kicker"><ShieldCheck size={15} /> CHỈ HIỂN THỊ MỘT LẦN</div>
+        <h2 id="credentials-title">{title}</h2>
+        <p className="modal-intro">Mật khẩu tạm của các tài khoản sẽ không được lưu hoặc hiển thị lại. Hãy tải hoặc sao chép danh sách trước khi đóng; người dùng phải đổi mật khẩu sau lần đăng nhập đầu.</p>
+        <div className="account-credentials-list">
+          {rows.map((account) => <div className="account-credential-row" key={account.username}>
+            <span><b>{account.displayName}</b><small>{account.username}</small></span>
+            <code>{account.temporaryPassword}</code>
+          </div>)}
+        </div>
+        {message && <p className="form-success" role="status">{message}</p>}
+        <div className="credentials-actions"><button className="secondary-button" onClick={copy}>Sao chép danh sách</button><button className="primary-button" onClick={download}>Tải CSV</button></div>
+        <button className="primary-button modal-done" onClick={onClose}>Đã lưu an toàn <Check size={16} /></button>
+      </section>
+    </div>
+  );
+}
+
+function AdminAccountsModal({ onClose }) {
+  const [users, setUsers] = useState([]);
+  const [username, setUsername] = useState('');
+  const [displayName, setDisplayName] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [credentials, setCredentials] = useState(null);
+  const [credentialTitle, setCredentialTitle] = useState('Thông tin đăng nhập tạm');
+
+  const refresh = useCallback(async () => {
+    setLoading(true);
+    try {
+      const response = await fetch('/api/admin/users', { credentials: 'same-origin', cache: 'no-store' });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.error || 'Không thể tải danh sách tài khoản.');
+      setUsers(result.users || []);
+      setError('');
+    } catch (requestError) {
+      setError(requestError.message || 'Không thể tải danh sách tài khoản.');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { void refresh(); }, [refresh]);
+
+  const createAccount = async (event) => {
+    event.preventDefault();
+    setBusy(true);
+    setError('');
+    try {
+      const response = await fetch('/api/admin/users', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin',
+        body: JSON.stringify({ username, displayName }),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.error || 'Không tạo được tài khoản.');
+      setCredentials([{ username: result.user.username, displayName: result.user.displayName, temporaryPassword: result.temporaryPassword }]);
+      setCredentialTitle('Thông tin tài khoản mới');
+      setUsername(''); setDisplayName('');
+      await refresh();
+    } catch (requestError) {
+      setError(requestError.message || 'Không tạo được tài khoản.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const updateAccount = async (account, action) => {
+    setBusy(true);
+    setError('');
+    try {
+      const response = await fetch('/api/admin/users', {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin',
+        body: JSON.stringify({ username: account.username, action }),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.error || 'Không cập nhật được tài khoản.');
+      if (result.temporaryPassword) {
+        setCredentials([{ username: account.username, displayName: account.displayName, temporaryPassword: result.temporaryPassword }]);
+        setCredentialTitle('Mật khẩu tạm mới');
+      }
+      await refresh();
+    } catch (requestError) {
+      setError(requestError.message || 'Không cập nhật được tài khoản.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+      <section className="help-modal admin-users-modal" role="dialog" aria-modal="true" aria-labelledby="admin-users-title">
+        <button className="modal-close" onClick={onClose} aria-label="Đóng"><X size={19} /></button>
+        <div className="modal-kicker"><Users size={15} /> QUẢN LÝ TÀI KHOẢN CON</div>
+        <h2 id="admin-users-title">Tài khoản</h2>
+        <p className="modal-intro">Tạo tài khoản, đặt lại mật khẩu hoặc tạm khóa quyền đăng nhập. Mật khẩu tạm chỉ hiện một lần.</p>
+        <form className="admin-create-form" onSubmit={createAccount}>
+          <label className="field-label" htmlFor="new-account-name">Tên hiển thị</label>
+          <input id="new-account-name" value={displayName} onChange={(event) => setDisplayName(event.target.value)} placeholder="Ví dụ: Học viên 11" maxLength={80} />
+          <label className="field-label" htmlFor="new-account-username">Tên đăng nhập</label>
+          <input id="new-account-username" value={username} onChange={(event) => setUsername(event.target.value)} placeholder="ví dụ: hocvien11" minLength={3} maxLength={32} required />
+          <button className="primary-button" type="submit" disabled={busy}>{busy ? 'Đang xử lý…' : 'Tạo tài khoản con'}</button>
+        </form>
+        {error && <p className="form-error" role="alert">{error}</p>}
+        <div className="admin-account-list" aria-live="polite">
+          {loading ? <p>Đang tải danh sách…</p> : users.map((account) => <div className="admin-account-row" key={account.id}>
+            <span className="admin-account-copy"><b>{account.displayName || account.username}</b><small>{account.username} · {account.isActive ? (account.mustChangePassword ? 'Chờ đổi mật khẩu' : 'Đang hoạt động') : 'Đã khóa'}</small></span>
+            <span className="admin-account-actions">
+              <button type="button" className="secondary-button" disabled={busy || !account.isActive} onClick={() => void updateAccount(account, 'reset-password')}>Đặt lại MK</button>
+              <button type="button" className="secondary-button" disabled={busy} onClick={() => void updateAccount(account, account.isActive ? 'disable' : 'enable')}>{account.isActive ? 'Khóa' : 'Mở'}</button>
+            </span>
+          </div>)}
+          {!loading && !users.length && !error && <p>Chưa có tài khoản con.</p>}
+        </div>
+        <button className="primary-button modal-done" onClick={onClose}>Đóng</button>
+      </section>
+      {credentials && <CredentialsModal accounts={credentials} title={credentialTitle} onClose={() => setCredentials(null)} />}
+    </div>
+  );
+}
+
+function ChangePasswordScreen({ user, onChanged, onLogout }) {
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const submit = async (event) => {
+    event.preventDefault();
+    if (newPassword.length < 12) return setError('Mật khẩu mới cần có ít nhất 12 ký tự.');
+    if (newPassword !== confirmPassword) return setError('Hai mật khẩu chưa khớp.');
+    setBusy(true); setError('');
+    try {
+      const response = await fetch('/api/auth/change-password', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin',
+        body: JSON.stringify({ newPassword }),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.error || 'Không đổi được mật khẩu.');
+      onChanged(result.user);
+    } catch (requestError) {
+      setError(requestError.message || 'Không đổi được mật khẩu.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <main className="login-page password-change-page">
+      <section className="login-panel password-change-panel">
+        <div className="login-form-wrap">
+          <div className="login-mobile-brand"><Brand /></div>
+          <div className="login-heading"><span className="login-greeting">Xin chào, {user.displayName || user.username}</span><h2>Đổi mật khẩu tạm</h2><p>Hãy tạo mật khẩu riêng trước khi sử dụng tài khoản này.</p></div>
+          <form className="login-form" onSubmit={submit}>
+            <label className="field-label" htmlFor="new-password">Mật khẩu mới</label>
+            <input className="auth-password-input" id="new-password" type="password" autoComplete="new-password" minLength={12} maxLength={128} value={newPassword} onChange={(event) => setNewPassword(event.target.value)} required />
+            <label className="field-label" htmlFor="confirm-password">Nhập lại mật khẩu</label>
+            <input className="auth-password-input" id="confirm-password" type="password" autoComplete="new-password" minLength={12} maxLength={128} value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} required />
+            {error && <p className="form-error" role="alert">{error}</p>}
+            <button className="primary-button login-submit" type="submit" disabled={busy}>{busy ? 'Đang lưu…' : 'Lưu mật khẩu mới'} <ArrowRight size={17} /></button>
+          </form>
+          <button className="plain-link" type="button" onClick={onLogout}>Đăng xuất</button>
+        </div>
+      </section>
+    </main>
   );
 }
 
@@ -476,7 +731,11 @@ function HelpModal({ onClose }) {
 }
 
 function App() {
-  const [authenticated, setAuthenticated] = useState(false);
+  const [authUser, setAuthUser] = useState(null);
+  const [authReady, setAuthReady] = useState(false);
+  const [authStatus, setAuthStatus] = useState({ loading: true, databaseReady: null, setupRequired: false });
+  const [provisionedAccounts, setProvisionedAccounts] = useState(null);
+  const [adminModalOpen, setAdminModalOpen] = useState(false);
   const [photoSelection, setPhotoSelection] = useState(SAMPLE_PHOTO);
   const [photo, setPhoto] = useState(null);
   const [region, setRegion] = useState(SAMPLE_REGION);
@@ -517,6 +776,49 @@ function App() {
   const ocrRequestRef = useRef(0);
   const ocrLockRef = useRef(false);
   const styleMatchRequestRef = useRef(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadAuth = async () => {
+      try {
+        const statusResponse = await fetch('/api/auth/status', { credentials: 'same-origin', cache: 'no-store' });
+        const statusData = await statusResponse.json().catch(() => ({}));
+        if (!statusResponse.ok || typeof statusData.databaseReady !== 'boolean') {
+          throw new Error(statusData.error || 'Không kết nối được cơ sở dữ liệu tài khoản.');
+        }
+        if (cancelled) return;
+        setAuthStatus({ ...statusData, loading: false });
+        if (statusData.databaseReady && !statusData.setupRequired) {
+          const sessionResponse = await fetch('/api/auth/me', { credentials: 'same-origin', cache: 'no-store' });
+          const sessionData = await sessionResponse.json().catch(() => ({}));
+          if (cancelled) return;
+          if (sessionResponse.ok) setAuthUser(sessionData.user ?? null);
+        }
+      } catch (error) {
+        if (!cancelled) setAuthStatus({ loading: false, databaseReady: false, setupRequired: false, error: error.message || 'Không kết nối được máy chủ đăng nhập.' });
+      } finally {
+        if (!cancelled) setAuthReady(true);
+      }
+    };
+    void loadAuth();
+    return () => { cancelled = true; };
+  }, []);
+
+  const handleLogin = (user) => setAuthUser(user);
+  const handleSetupCompleted = (user, accounts) => {
+    setAuthStatus((current) => ({ ...current, loading: false, databaseReady: true, setupRequired: false }));
+    setAuthUser(user);
+    setProvisionedAccounts(accounts || []);
+  };
+  const handleLogout = useCallback(async () => {
+    try {
+      await fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' });
+    } finally {
+      setAuthUser(null);
+      setAdminModalOpen(false);
+    }
+  }, []);
+  const handlePasswordChanged = (user) => setAuthUser(user);
 
   const notify = useCallback((message) => {
     setToast(message);
@@ -1087,7 +1389,9 @@ function App() {
     }
   };
 
-  if (!authenticated) return <LoginScreen onLogin={() => setAuthenticated(true)} />;
+  if (!authReady) return <LoginScreen onLogin={handleLogin} onSetupCompleted={handleSetupCompleted} status={{ ...authStatus, loading: true }} />;
+  if (!authUser) return <LoginScreen onLogin={handleLogin} onSetupCompleted={handleSetupCompleted} status={authStatus} />;
+  if (authUser.mustChangePassword) return <ChangePasswordScreen user={authUser} onChanged={handlePasswordChanged} onLogout={handleLogout} />;
 
   return (
     <div className="app-shell">
@@ -1106,15 +1410,15 @@ function App() {
             <span className="privacy-status-dot" />
           </div>
           <div className="sidebar-profile">
-            <span className="user-avatar profile-avatar">LN</span>
-            <span className="sidebar-profile-text"><b>Lan Nguyễn</b><small>Tài khoản giáo viên</small></span>
-            <button aria-label="Đăng xuất" title="Đăng xuất" onClick={() => setAuthenticated(false)}><LogOut size={17} /></button>
+            <span className="user-avatar profile-avatar">{accountInitials(authUser)}</span>
+            <span className="sidebar-profile-text"><b>{authUser.displayName || authUser.username}</b><small>{accountRoleLabel(authUser)}</small></span>
+            <button aria-label="Đăng xuất" title="Đăng xuất" onClick={() => void handleLogout()}><LogOut size={17} /></button>
           </div>
         </div>
       </aside>
 
       <main className="app-main">
-        <EditorHeader onHelp={() => setHelpOpen(true)} onLogout={() => setAuthenticated(false)} />
+        <EditorHeader onHelp={() => setHelpOpen(true)} onLogout={() => void handleLogout()} onManageAccounts={() => setAdminModalOpen(true)} user={authUser} />
         <div className="main-content">
           <div className="editor-title-row">
             <div>
@@ -1297,6 +1601,8 @@ function App() {
       <input ref={fileInputRef} className="file-input-hidden" type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => chooseFile(event.target.files?.[0])} />
       {toast && <div className="toast-message" role="status"><span className="toast-check"><Check size={13} /></span>{toast}</div>}
       {helpOpen && <HelpModal onClose={() => setHelpOpen(false)} />}
+      {adminModalOpen && authUser.role === 'admin' && <AdminAccountsModal onClose={() => setAdminModalOpen(false)} />}
+      {provisionedAccounts && <CredentialsModal accounts={provisionedAccounts} onClose={() => setProvisionedAccounts(null)} />}
     </div>
   );
 }

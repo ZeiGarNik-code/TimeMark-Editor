@@ -4,11 +4,11 @@
 
 ## Xuất bản
 
-Workflow `.github/workflows/deploy-pages.yml` kiểm thử, build và triển khai lên GitHub Pages khi có push tới `main` (hoặc nhánh triển khai đang làm việc). URL ổn định dự kiến sau khi Pages được bật và workflow chạy thành công:
+Bản production đang chạy trên Vercel:
 
-**https://zeigarnik-code.github.io/TimeMark-Editor/**
+**https://timemark-studio.vercel.app/**
 
-Repository hiện ở chế độ riêng tư; khả năng xuất bản trang công khai phụ thuộc quyền Pages/plan của chủ repo. Không đổi repo sang công khai nếu không muốn công khai mã nguồn. Tài khoản demo bên dưới chỉ để thử giao diện, không phải xác thực bảo mật.
+Repository GitHub vẫn ở chế độ riêng tư. GitHub Pages không được dùng để triển khai ứng dụng.
 
 ## Chạy thử
 
@@ -17,12 +17,13 @@ npm install
 npm run dev
 ```
 
-Mở URL do Vite hiển thị. Tài khoản demo:
+Mở URL do Vite hiển thị. Khi không có API/database được cấu hình, Vite chỉ bật tài khoản demo cục bộ `giaovien` / `timemark123`; tài khoản này chỉ để phát triển, không có trên production. Có thể bấm **Ảnh mẫu** để khôi phục ảnh minh hoạ. Dùng **Chọn ảnh** để mở JPG, PNG hoặc WebP từ thiết bị.
 
-- **Tài khoản:** `giaovien`
-- **Mật khẩu:** `timemark123`
+## Khởi tạo tài khoản production
 
-Có thể bấm **Ảnh mẫu** để khôi phục ảnh minh hoạ. Dùng **Chọn ảnh** để mở JPG, PNG hoặc WebP từ thiết bị.
+Production dùng API serverless của Vercel và Neon Postgres. Có thể kiểm tra kết nối bằng `https://timemark-studio.vercel.app/api/health/db`; `ok: true` xác nhận truy vấn SQL tới DB đã chạy thành công. Vercel cần có biến kết nối `DATABASE_URL` (Neon đã gắn vào project) và biến bí mật `TIMEMARK_ADMIN_SETUP_TOKEN` trong môi trường Production. Tạo token ngẫu nhiên dài ít nhất 32 ký tự, đặt loại **Sensitive**, rồi triển khai lại; không đưa token hoặc chuỗi kết nối vào Git hay chat.
+
+Mở trang production lần đầu để tạo tài khoản admin của bạn (tên đăng nhập tùy chọn, mật khẩu tối thiểu 12 ký tự). Quá trình này tạo 10 tài khoản con `hocvien01`–`hocvien10` và một tài khoản giáo viên thử `giaovien`. Mật khẩu tạm chỉ hiện một lần để lưu/tải CSV; người dùng phải đổi mật khẩu ở lần đăng nhập đầu. Admin có thể tạo thêm tài khoản, đặt lại mật khẩu và khóa/mở tài khoản từ nút **Tài khoản** trên thanh trên cùng.
 
 ## Kiểm thử trực tiếp trên web
 
@@ -44,9 +45,11 @@ Bộ test là checklist thao tác thủ công trên giao diện; **Kiểm thử 
 - Xuất PNG (không nén mất dữ liệu khi xuất) hoặc JPG chất lượng 97%. Canvas xuất dùng đúng chiều rộng và chiều cao pixel của ảnh đã mở, không chủ động co kích thước.
 - Có thể cài như ứng dụng web và dùng ngoại tuyến sau khi mở trang ít nhất một lần (trình duyệt cần hỗ trợ service worker; khi triển khai cần HTTPS). Để OCR và bộ tẩy nâng cao hoạt động offline, hãy chạy OCR và làm sạch chữ ít nhất một lần khi có kết nối để trình duyệt nạp/lưu mô hình và OpenCV.js.
 
-## Giới hạn quan trọng
+## Bảo mật và quyền riêng tư
 
-Đây là **prototype chạy hoàn toàn ở trình duyệt**, không có máy chủ. Màn hình đăng nhập và tài khoản trên chỉ để kiểm thử giao diện, không phải cơ chế xác thực an toàn; ai cũng có thể xem thông tin tài khoản trong mã nguồn. Không dùng tài khoản này để bảo vệ ảnh hoặc dữ liệu thật khi đưa lên Internet. Muốn phục vụ một nhóm giáo viên thật cần bổ sung xác thực phía máy chủ, tài khoản riêng và chính sách lưu trữ phù hợp.
+Đăng nhập production được kiểm tra ở máy chủ; mật khẩu được băm bằng scrypt, phiên đăng nhập dùng cookie HttpOnly/Secure và tài khoản con có thể bị admin khóa hoặc đặt lại mật khẩu. Ảnh vẫn được giải mã, xử lý và xuất ngay trong trình duyệt — ứng dụng không tải ảnh lên Neon hay Vercel. Đăng nhập cần kết nối mạng; sau khi đã vào ứng dụng, thao tác ảnh vẫn chạy cục bộ.
+
+Tài khoản demo `giaovien` / `timemark123` chỉ có trong môi trường phát triển Vite, không phải tài khoản production. Bảo vệ biến `DATABASE_URL` và `TIMEMARK_ADMIN_SETUP_TOKEN` bằng cài đặt Sensitive của Vercel; không chia sẻ giá trị của chúng.
 
 Bộ quét chỉ gợi ý **vị trí có khả năng chứa chữ**; với khung hẹp ở góc dưới, ứng dụng nới khung vừa đủ để giữ cả khối mốc nhiều dòng nhưng vẫn cần kiểm tra và có thể kéo lại. OCR có thể nhận sai, nhất là trên ảnh nhỏ, chữ mờ hoặc nền phức tạp. Hãy xem văn bản thô/độ tin cậy và soát lại các trường trước khi áp dụng. Telea inpainting giảm vệt chữ cũ so với nội suy đơn giản, nhưng không thể khôi phục chính xác chi tiết bị chữ che trên nền nhiều hoạ tiết; hãy so sánh ảnh gốc và kiểm tra tệp đầu ra.
 
