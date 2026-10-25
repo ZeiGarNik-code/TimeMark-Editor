@@ -410,31 +410,6 @@ button:disabled { opacity: .5; cursor: not-allowed !important; }
 .help-note svg { flex: 0 0 auto; margin-top: 1px; }
 .modal-done { width: 100%; height: 40px; margin-top: 18px; }
 
-/* Secure accounts */
-.form-success { margin: 8px 0; color: #197b5d; font-size: 10px; line-height: 1.5; }
-.auth-password-input, .admin-create-form input { width: 100%; height: 42px; margin: 7px 0 15px; padding: 0 11px; border: 1px solid #e4e9ed; border-radius: 8px; color: #263847; background: #fbfcfd; font-size: 12px; }
-.auth-password-input:focus, .admin-create-form input:focus { border-color: #75c7a7; outline: 0; box-shadow: 0 0 0 3px rgba(55,184,138,.09); }
-.password-change-page { grid-template-columns: 1fr; }
-.password-change-panel { min-height: 100vh; align-items: center; justify-content: center; }
-.password-change-panel .login-form-wrap { margin: 0; }
-.admin-manage-button { color: #198566; }
-.admin-users-modal, .credentials-modal { width: min(100%, 680px); max-height: calc(100vh - 32px); overflow-y: auto; }
-.account-credentials-list, .admin-account-list { display: flex; flex-direction: column; gap: 7px; max-height: 340px; margin-top: 18px; overflow-y: auto; }
-.account-credential-row, .admin-account-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 11px; border: 1px solid #edf1ee; border-radius: 8px; background: #fbfdfb; }
-.account-credential-row > span, .admin-account-copy { display: flex; min-width: 0; flex-direction: column; gap: 4px; }
-.account-credential-row b, .admin-account-copy b { color: #3c5059; font-size: 10px; }
-.account-credential-row small, .admin-account-copy small { color: #839197; font-size: 9px; }
-.account-credential-row code { max-width: 56%; overflow-wrap: anywhere; color: #176f55; font-size: 10px; text-align: right; }
-.credentials-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
-.credentials-actions button { min-height: 36px; padding: 0 12px; font-size: 10px; }
-.admin-create-form { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; align-items: end; gap: 7px 10px; margin-top: 20px; padding: 14px; border: 1px solid #edf1ee; border-radius: 10px; background: #fbfdfb; }
-.admin-create-form .field-label { grid-row: 1; }
-.admin-create-form input { grid-row: 2; margin: 0; }
-.admin-create-form button { grid-column: 3; grid-row: 2; min-height: 42px; padding: 0 12px; font-size: 10px; white-space: nowrap; }
-.admin-account-list { max-height: 300px; }
-.admin-account-actions { display: flex; flex: 0 0 auto; gap: 6px; }
-.admin-account-actions button { min-height: 29px; padding: 0 8px; font-size: 8px; }
-
 /* Responsive */
 @media (max-width: 1200px) {
   .web-test-grid { grid-template-columns: minmax(0, 1fr); }
@@ -474,11 +449,6 @@ button:disabled { opacity: .5; cursor: not-allowed !important; }
   .web-test-local-badge { display: none; }
   .web-test-setup, .web-test-checklist { padding: 13px 12px 14px; }
   .web-test-hint { padding-right: 12px; padding-left: 12px; }
-  .admin-create-form { display: flex; align-items: stretch; flex-direction: column; }
-  .admin-create-form .field-label { margin-top: 5px; }
-  .admin-create-form button { width: 100%; }
-  .account-credential-row { align-items: flex-start; flex-direction: column; }
-  .account-credential-row code { max-width: 100%; text-align: left; }
   .login-page { grid-template-columns: 1fr; min-height: 100vh; }
   .login-story { display: none; }
   .login-panel { min-height: 100vh; padding: 19px 23px 18px; }
