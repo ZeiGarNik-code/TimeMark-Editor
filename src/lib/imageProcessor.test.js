@@ -154,6 +154,7 @@ test('light timestamp strokes use regular 400 weight to match the supplied photo
   assert.ok(inferred);
   assert.ok(inferred.metrics.inkCoverage > 0.15 && inferred.metrics.inkCoverage < 0.21);
   assert.equal(inferred.weight, 400);
+  assert.equal(inferred.timeWeight, 500);
 });
 
 test('automatic typography inference declines to guess without the orange divider', () => {
@@ -178,7 +179,7 @@ test('matched time uses the source glyph width and ink left edge for replacement
     },
     translate(x, y) { operations.push({ type: 'translate', x, y }); },
     scale(x, y) { operations.push({ type: 'scale', x, y }); },
-    fillText(text, x, y, maxWidth) { operations.push({ type: 'text', text, x, y, maxWidth }); },
+    fillText(text, x, y, maxWidth) { operations.push({ type: 'text', text, x, y, maxWidth, font: this.font }); },
     fillRect(x, y, width, height) { operations.push({ type: 'divider', x, y, width, height }); },
   };
   const sourceInkWidth = 173;
@@ -187,7 +188,7 @@ test('matched time uses the source glyph width and ink left edge for replacement
     time: '10:42', date: '', weekday: '', address: '',
   }, {
     color: '#ffffff', fontScale: 0.028, timeGlyphScale: 86 / 90,
-    align: 'left', weight: 400, opacity: 1, shadow: false,
+    align: 'left', weight: 400, timeWeight: 500, opacity: 1, shadow: false,
     fontFamily: 'Roboto Condensed, sans-serif',
     sourceWidths: { time: sourceInkWidth },
     sourcePositions: { timeX: sourceTimeX },
@@ -198,7 +199,9 @@ test('matched time uses the source glyph width and ink left edge for replacement
   assert.ok(scale);
   assert.ok(Math.abs(scale.x - sourceInkWidth / expectedInkWidth) < 0.001);
   assert.ok(Math.abs(translation.x - (sourceTimeX - result.fontSize * 0.08 * scale.x)) < 0.001);
-  assert.equal(operations.find((operation) => operation.type === 'text').text, '10:42');
+  const renderedTime = operations.find((operation) => operation.type === 'text');
+  assert.equal(renderedTime.text, '10:42');
+  assert.match(renderedTime.font, /^500 /);
 });
 
 test('timestamp text stays aligned to the detected original divider and drops seconds', () => {
@@ -211,7 +214,7 @@ test('timestamp text stays aligned to the detected original divider and drops se
       const size = Number(this.font.match(/([\d.]+)px/)?.[1] ?? 12);
       return { width: String(text).length * size * 0.52 };
     },
-    fillText(text, x, y, maxWidth) { operations.push({ type: 'text', text, x, y, maxWidth }); },
+    fillText(text, x, y, maxWidth) { operations.push({ type: 'text', text, x, y, maxWidth, font: this.font }); },
     fillRect(x, y, width, height) { operations.push({ type: 'divider', x, y, width, height }); },
   };
   const region = { x: 0, y: 0.82, w: 0.76, h: 0.18 };
@@ -230,6 +233,9 @@ test('timestamp text stays aligned to the detected original divider and drops se
   assert.equal(result.anchoredToDivider, true);
   assert.equal(marker.x, 224);
   assert.ok(time);
+  assert.match(time.font, /^700 /);
+  assert.match(date.font, /^600 /);
+  assert.match(address.font, /^600 /);
   assert.ok(time.x + time.maxWidth <= marker.x);
   assert.ok(date.x > marker.x + marker.width);
   assert.ok(weekday.x > marker.x + marker.width);

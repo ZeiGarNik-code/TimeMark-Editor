@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import App from './App.jsx';
 import '@fontsource/roboto-condensed/300.css';
 import '@fontsource/roboto-condensed/400.css';
+import '@fontsource/roboto-condensed/500.css';
 import '@fontsource/roboto-condensed/700.css';
 import './styles.css';
 

@@ -80,6 +80,7 @@ const INITIAL_STYLE = {
   textPaddingRatio: 0.036,
   align: 'left',
   weight: 400,
+  timeWeight: 500,
   opacity: 1,
   shadow: true,
   fontFamily: '"Roboto Condensed", "Arial Narrow", Arial, sans-serif',
@@ -534,7 +535,7 @@ function App() {
     const loadLocalStampFonts = async () => {
       try {
         if (document.fonts?.load) {
-          await Promise.all([300, 400, 700].map((weight) => document.fonts.load(
+          await Promise.all([300, 400, 500, 700].map((weight) => document.fonts.load(
             `${weight} 48px "Roboto Condensed"`,
             'Thứ Năm, 24 tháng 10, 2026 · Phú Nhuận',
           )));
@@ -820,6 +821,7 @@ function App() {
     ...current,
     [key]: value,
     ...(key === 'lineHeight' ? { detailLineHeight: value, addressLineHeight: value } : {}),
+    ...(key === 'weight' ? { timeWeight: value } : {}),
   }));
 
   const matchOriginalStyle = useCallback(async ({ quiet = false, automatic = false } = {}) => {
@@ -836,7 +838,10 @@ function App() {
       if (typography) {
         if (typography.fontFamily.includes('Roboto Condensed') && document.fonts?.load) {
           try {
-            await document.fonts.load(`${typography.weight} 48px "Roboto Condensed"`, 'Thứ Năm, 24 tháng 10, 2026 · Phú Nhuận');
+            await Promise.all([...new Set([typography.weight, typography.timeWeight ?? typography.weight])].map((weight) => document.fonts.load(
+              `${weight} 48px "Roboto Condensed"`,
+              'Thứ Năm, 24 tháng 10, 2026 · Phú Nhuận',
+            )));
             await document.fonts.ready;
           } catch {
             // Keep the matched geometry and let the browser use the bundled font fallback stack.
@@ -848,6 +853,7 @@ function App() {
           color: eraseColor,
           fontFamily: typography.fontFamily,
           weight: typography.weight,
+          timeWeight: typography.timeWeight,
           fontScale: 0.028,
           timeGlyphScale: typography.timeGlyphScale,
           detailGlyphScale: typography.detailGlyphScale,

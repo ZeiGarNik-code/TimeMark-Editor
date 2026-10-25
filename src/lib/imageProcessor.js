@@ -476,6 +476,7 @@ export function inferStampTypography(imageData, inkColor = { r: 255, g: 255, b: 
     // The photo sample's time line is slightly heavier than its fine-print
     // rows. Keep the default at regular instead of making the whole stamp bold.
     weight: inkCoverage < 0.12 ? 300 : inkCoverage < 0.29 ? 400 : 700,
+    timeWeight: inkCoverage < 0.29 ? 500 : 700,
     timeGlyphScale: clamp(timeLine.height / divider.h, 0.55, 1.25),
     detailGlyphScale: clamp(detailGlyphHeight / divider.h, 0.18, 0.68),
     addressGlyphScale: clamp(addressGlyphHeight / divider.h, 0.18, 0.68),
@@ -817,7 +818,8 @@ function drawTimestampAroundDivider(ctx, region, content, style, canvasWidth, ca
   const dividerWidth = Math.max(2, divider.w);
   const dividerHeight = Math.max(12, divider.h);
   const fontFamily = style.fontFamily ?? '"Roboto Condensed", "Arial Narrow", Arial, sans-serif';
-  const weight = style.weight ?? 300;
+  const weight = style.weight ?? 400;
+  const timeWeight = style.timeWeight ?? Math.min(700, weight + 100);
   const scale = clamp((style.fontScale ?? 0.028) / 0.028, 0.55, 1.8);
   const timeText = String(content.time ?? '');
   const dateText = String(content.date ?? '');
@@ -838,8 +840,8 @@ function drawTimestampAroundDivider(ctx, region, content, style, canvasWidth, ca
   const addressGlyphHeight = dividerHeight * (style.addressGlyphScale ?? 0.40) * scale;
   const paddingX = Math.max(5, w * (style.textPaddingRatio ?? 0.035));
   const paddingY = Math.max(4, h * 0.075);
-  const timeSize = fontSizeForGlyphHeight(ctx, timeText || timeSample, fontFamily, weight, timeGlyphHeight);
-  ctx.font = `${weight} ${timeSize}px ${fontFamily}`;
+  const timeSize = fontSizeForGlyphHeight(ctx, timeText || timeSample, fontFamily, timeWeight, timeGlyphHeight);
+  ctx.font = `${timeWeight} ${timeSize}px ${fontFamily}`;
   const timeWidthMetrics = ctx.measureText(timeText || timeSample);
   const timeInkWidth = measuredInkWidth(timeWidthMetrics);
   const timeWidthScale = Number.isFinite(sourceWidths.time)
@@ -896,7 +898,7 @@ function drawTimestampAroundDivider(ctx, region, content, style, canvasWidth, ca
     fittedAddressSize *= addressAvailableHeight / Math.max(1, addressLines.length * leading);
   }
   const addressLineWidthScales = addressLines.map((_, index) => addressWidthScaleForSize(fittedAddressSize, index));
-  const timeMetrics = getTextVerticalMetrics(ctx, timeText || timeSample, fontFamily, weight, timeSize);
+  const timeMetrics = getTextVerticalMetrics(ctx, timeText || timeSample, fontFamily, timeWeight, timeSize);
 
   ctx.fillStyle = style.color ?? '#ffffff';
   ctx.globalAlpha = style.opacity ?? 1;
@@ -908,7 +910,7 @@ function drawTimestampAroundDivider(ctx, region, content, style, canvasWidth, ca
   ctx.shadowOffsetY = style.shadow ? Math.max(0.25, addressSize * 0.012) : 0;
 
   if (timeText) {
-    ctx.font = `${weight} ${timeSize}px ${fontFamily}`;
+    ctx.font = `${timeWeight} ${timeSize}px ${fontFamily}`;
     const timeTop = dividerY + Math.max(0, (dividerHeight - timeGlyphHeight) / 2);
     fillTextHorizontallyScaled(ctx, timeText, timeX, timeTop + timeMetrics.ascent, timeWidth, timeWidthScale);
   }
