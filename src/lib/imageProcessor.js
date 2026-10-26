@@ -68,7 +68,9 @@ export function scanCornerText(imageData) {
     let best = null;
     for (const group of groups) {
       const groupHeight = group.end - group.start + 1;
-      if (groupHeight < Math.max(4, zoneH * 0.045) || groupHeight > zoneH * 0.82) continue;
+      // Downscaled photos can leave thin glyphs only a few pixels tall. Keep
+      // the minimum tied to the scan crop, but low enough to retain those rows.
+      if (groupHeight < Math.max(2, zoneH * 0.008) || groupHeight > zoneH * 0.82) continue;
 
       let minX = zoneW;
       let maxX = 0;
@@ -1040,7 +1042,9 @@ function mergeLineGroups(lines, maxHeight) {
     const currentHeight = current.end - current.start + 1;
     const lineHeight = line.end - line.start + 1;
     const verticalGap = line.start - current.end - 1;
-    const allowedGap = Math.max(3, Math.min(maxHeight * 0.22, (currentHeight + lineHeight) * 0.65));
+    // A timestamp's four logical lines can be separated by larger gaps than
+    // the glyph height, especially after scaling a high-resolution photo down.
+    const allowedGap = Math.max(3, Math.min(maxHeight * 0.26, (currentHeight + lineHeight) * 1.2));
     if (verticalGap <= allowedGap && line.end - current.start + 1 <= maxHeight) {
       current.end = line.end;
       current.rows.push(...line.rows);

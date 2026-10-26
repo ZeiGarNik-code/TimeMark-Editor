@@ -51,6 +51,7 @@ const SAMPLE_PHOTO = {
   isSample: true,
 };
 const SAMPLE_REGION = { x: 0.565, y: 0.718, w: 0.402, h: 0.226, corner: 'bottom-right' };
+const SCAN_MAX_DIMENSION = 1400;
 const SAMPLE_OLD_CONTENT = {
   weekday: 'Thứ Năm',
   date: '12 tháng 06, 2025',
@@ -493,7 +494,7 @@ function App() {
         drawTimestamp(sourceContext, initialRegion, SAMPLE_OLD_CONTENT, INITIAL_STYLE, width, height);
         setScanData({ confidence: 0.92, message: 'Ảnh mẫu · vùng được xác định sẵn' });
       } else {
-        const scale = Math.min(1, 700 / Math.max(width, height));
+        const scale = Math.min(1, SCAN_MAX_DIMENSION / Math.max(width, height));
         const scanCanvas = makeCanvas(Math.max(1, Math.round(width * scale)), Math.max(1, Math.round(height * scale)));
         const scanContext = scanCanvas.getContext('2d', { willReadFrequently: true });
         scanContext.drawImage(sourceCanvas, 0, 0, scanCanvas.width, scanCanvas.height);
@@ -638,7 +639,7 @@ function App() {
       notify('Đã quét lại vùng mốc trên ảnh mẫu.');
       return;
     }
-    const scale = Math.min(1, 700 / Math.max(photo.width, photo.height));
+    const scale = Math.min(1, SCAN_MAX_DIMENSION / Math.max(photo.width, photo.height));
     const scanCanvas = makeCanvas(Math.max(1, Math.round(photo.width * scale)), Math.max(1, Math.round(photo.height * scale)));
     const scanContext = scanCanvas.getContext('2d', { willReadFrequently: true });
     scanContext.drawImage(photo.sourceCanvas, 0, 0, scanCanvas.width, scanCanvas.height);
