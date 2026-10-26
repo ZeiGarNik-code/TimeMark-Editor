@@ -23,6 +23,134 @@ export function expandDetectedStampRegion(region, corner = region?.corner ?? 'bo
   };
 }
 
+function isWarmDividerPixel(data, offset) {
+  const red = data[offset];
+  const green = data[offset + 1];
+  const blue = data[offset + 2];
+  const maximum = Math.max(red, green, blue);
+  const minimum = Math.min(red, green, blue);
+  const delta = maximum - minimum;
+  if (maximum < 145 || delta < 75 || delta / maximum < 0.42) return false;
+
+  let hue = 0;
+  if (maximum === red) hue = 60 * (((green - blue) / delta) % 6);
+  else if (maximum === green) hue = 60 * ((blue - red) / delta + 2);
+  else hue = 60 * ((red - green) / delta + 4);
+  if (hue < 0) hue += 360;
+  return hue >= 18 && hue <= 70;
+}
+
+/** Find a narrow, mostly continuous warm divider without requiring it to be an isolated component. */
+function findWarmVerticalAccent(imageData, options = {}) {
+  const { data, width, height } = imageData ?? {};
+  if (!data || width < 8 || height < 16) return null;
+  const {
+    xMinRatio = 0.06,
+    xMaxRatio = 0.62,
+    yMinRatio = 0,
+    yMaxRatio = 0.72,
+    minCountRatio = 0.18,
+    minRunRatio = 0.18,
+    maxWidthRatio = 0.015,
+  } = options;
+  const minX = Math.max(0, Math.round(width * xMinRatio));
+  const maxX = Math.min(width - 1, Math.round(width * xMaxRatio));
+  const top = Math.max(0, Math.round(height * yMinRatio));
+  const bottom = Math.min(height - 1, Math.round(height * yMaxRatio));
+  const scanHeight = bottom - top + 1;
+  if (scanHeight < 12) return null;
+  const minCount = Math.max(6, Math.round(scanHeight * minCountRatio));
+  const minRun = Math.max(10, Math.round(scanHeight * minRunRatio));
+  const maxWidth = Math.max(4, Math.round(width * maxWidthRatio));
+  const columns = [];
+
+  for (let x = minX; x <= maxX; x += 1) {
+    let count = 0;
+    let run = 0;
+    let gap = 0;
+    let runStart = top;
+    let bestRun = 0;
+    let bestStart = top;
+    let bestEnd = top;
+    for (let y = top; y <= bottom; y += 1) {
+      if (isWarmDividerPixel(data, (y * width + x) * 4)) {
+        count += 1;
+        if (run === 0) runStart = y;
+        run += 1;
+        gap = 0;
+        if (run > bestRun) {
+          bestRun = run;
+          bestStart = runStart;
+          bestEnd = y;
+        }
+      } else if (run > 0 && gap < 2) {
+        gap += 1;
+      } else {
+        run = 0;
+        gap = 0;
+      }
+    }
+    if (count >= minCount && bestRun >= minRun) {
+      columns.push({ x, count, run: bestRun, top: bestStart, bottom: bestEnd });
+    }
+  }
+
+  let best = null;
+  let group = [];
+  const considerGroup = () => {
+    if (!group.length) return;
+    const x = group[0].x;
+    const right = group[group.length - 1].x;
+    const w = right - x + 1;
+    const y = Math.min(...group.map((column) => column.top));
+    const lower = Math.max(...group.map((column) => column.bottom));
+    const h = lower - y + 1;
+    if (w > maxWidth || h < minRun) return;
+
+    const density = Math.min(1, group.reduce((sum, column) => sum + column.run, 0) / Math.max(1, w * h));
+    const meanRun = group.reduce((sum, column) => sum + column.run, 0) / group.length;
+    // A real divider tends to form a few adjacent, consistent columns; a
+    // single warm fruit/highlight column is less likely to be the stamp marker.
+    const score = meanRun * density * Math.sqrt(w);
+    if (score <= (best?.score ?? 0)) return;
+
+    let redTotal = 0;
+    let greenTotal = 0;
+    let blueTotal = 0;
+    const pixels = [];
+    for (let py = y; py <= lower; py += 1) {
+      for (let px = x; px <= right; px += 1) {
+        const index = py * width + px;
+        const offset = index * 4;
+        if (!isWarmDividerPixel(data, offset)) continue;
+        pixels.push(index);
+        redTotal += data[offset];
+        greenTotal += data[offset + 1];
+        blueTotal += data[offset + 2];
+      }
+    }
+    if (pixels.length < minCount) return;
+    best = {
+      x, y, w, h, score, pixels,
+      color: {
+        r: Math.round(redTotal / pixels.length),
+        g: Math.round(greenTotal / pixels.length),
+        b: Math.round(blueTotal / pixels.length),
+      },
+    };
+  };
+
+  for (const column of columns) {
+    if (group.length && column.x > group[group.length - 1].x + 1) {
+      considerGroup();
+      group = [];
+    }
+    group.push(column);
+  }
+  considerGroup();
+  return best;
+}
+
 /**
  * Estimate the four-field timestamp block in the lower-left corner. This is
  * a contrast/edge scan (not OCR): it suggests a starting box that the user
@@ -31,6 +159,32 @@ export function expandDetectedStampRegion(region, corner = region?.corner ?? 'bo
 export function scanCornerText(imageData) {
   const { data, width, height } = imageData;
   if (!data || width < 8 || height < 8) return { ...DEFAULT_REGION, confidence: 0 };
+
+  // On busy photos, row-edge density is easily overwhelmed by real scene
+  // texture. The narrow warm divider is a stronger anchor for this stamp style.
+  const divider = findWarmVerticalAccent(imageData, {
+    xMinRatio: 0.06,
+    xMaxRatio: 0.45,
+    yMinRatio: 0.58,
+    yMaxRatio: 0.97,
+    minCountRatio: 0.06,
+    minRunRatio: 0.16,
+    maxWidthRatio: 0.012,
+  });
+  if (divider) {
+    const topPadding = Math.max(height * 0.035, divider.h * 0.28);
+    const y = Math.max(0, (divider.y - topPadding) / height);
+    const confidence = Math.min(0.90, Math.max(0.62, 0.62 + (divider.score / (divider.score + 4)) * 0.24));
+    return {
+      corner: 'bottom-left',
+      x: 0,
+      y,
+      w: 0.76,
+      h: 1 - y,
+      score: divider.score,
+      confidence,
+    };
+  }
 
   const candidates = [];
   for (const corner of CORNERS) {
@@ -311,8 +465,8 @@ export function inpaintInk(imageData, inkColor = { r: 255, g: 255, b: 255 }, tol
     : { data: current, width, height };
 }
 
-function restrictInkMaskToStampLayout(mask, imageData, inkColor, divider) {
-  const typography = inferStampTypography(imageData, inkColor, divider);
+function restrictInkMaskToStampLayout(mask, imageData, inkColor, divider, knownTypography = null) {
+  const typography = knownTypography ?? inferStampTypography(imageData, inkColor, divider);
   const metrics = typography?.metrics;
   if (!metrics?.time || (!metrics.date && !metrics.weekday)) return false;
 
@@ -349,6 +503,69 @@ function restrictInkMaskToStampLayout(mask, imageData, inkColor, divider) {
   return true;
 }
 
+// Flood each detected line in its own tight band. On a detailed photo, white
+// text can connect to nearby highlights; a full-crop flood then swallows the
+// entire sign or drops the connected date component as implausibly wide.
+function maskLineLocalComponents(candidates, visited, queue, mask, width, height, lines, divider, areaLimit) {
+  const marginX = Math.max(1, Math.round(divider.h * 0.02));
+  const marginY = Math.max(1, Math.round(divider.h * 0.02));
+  for (const line of lines) {
+    const left = Math.max(0, Math.floor(line.x) - marginX);
+    const right = Math.min(width, Math.ceil(line.x + line.width) + marginX);
+    const top = Math.max(0, Math.floor(line.y) - marginY);
+    const bottom = Math.min(height, Math.ceil(line.y + line.height) + marginY);
+    const roiWidth = right - left;
+    const roiHeight = bottom - top;
+    if (roiWidth < 1 || roiHeight < 1) continue;
+    const roiArea = roiWidth * roiHeight;
+    const componentAreaLimit = Math.min(areaLimit, roiArea + 64);
+
+    for (let y = top; y < bottom; y += 1) {
+      for (let x = left; x < right; x += 1) {
+        const seed = y * width + x;
+        if (!candidates[seed] || visited[seed]) continue;
+        let head = 0;
+        let tail = 0;
+        let minY = y;
+        let maxY = y;
+        visited[seed] = 1;
+        queue[tail++] = seed;
+
+        while (head < tail) {
+          const index = queue[head++];
+          const pixelY = Math.floor(index / width);
+          const pixelX = index - pixelY * width;
+          minY = Math.min(minY, pixelY);
+          maxY = Math.max(maxY, pixelY);
+          for (let dy = -1; dy <= 1; dy += 1) {
+            const nextY = pixelY + dy;
+            if (nextY < top || nextY >= bottom) continue;
+            for (let dx = -1; dx <= 1; dx += 1) {
+              if (dx === 0 && dy === 0) continue;
+              const nextX = pixelX + dx;
+              if (nextX < left || nextX >= right) continue;
+              const next = nextY * width + nextX;
+              if (candidates[next] && !visited[next]) {
+                visited[next] = 1;
+                queue[tail++] = next;
+              }
+            }
+          }
+        }
+
+        const componentHeight = maxY - minY + 1;
+        const relativeHeight = componentHeight / Math.max(1, line.height);
+        // Reject tiny dense glints while keeping character-height strokes and
+        // the narrow punctuation that is joined to a larger glyph component.
+        const plausible = tail >= 2 && tail <= componentAreaLimit && relativeHeight >= 0.26;
+        if (plausible) {
+          for (let index = 0; index < tail; index += 1) mask[queue[index]] = 255;
+        }
+      }
+    }
+  }
+}
+
 export function createInkMask(imageData, inkColor = { r: 255, g: 255, b: 255 }, tolerance = 74) {
   const { data, width, height } = imageData;
   const count = width * height;
@@ -368,53 +585,64 @@ export function createInkMask(imageData, inkColor = { r: 255, g: 255, b: 255 }, 
   }
 
   const areaLimit = count * 0.075;
-  for (let seed = 0; seed < count; seed += 1) {
-    if (!candidates[seed] || visited[seed]) continue;
-    let head = 0;
-    let tail = 0;
-    let minX = width;
-    let maxX = 0;
-    let minY = height;
-    let maxY = 0;
-    visited[seed] = 1;
-    queue[tail++] = seed;
+  const divider = findAccentDivider(data, width, height);
+  const typography = divider ? inferStampTypography(imageData, inkColor, divider) : null;
+  const layoutLines = [
+    typography?.metrics?.time,
+    typography?.metrics?.date,
+    typography?.metrics?.weekday,
+    ...(typography?.metrics?.address ?? []),
+  ].filter(Boolean);
+  if (layoutLines.length) {
+    maskLineLocalComponents(candidates, visited, queue, mask, width, height, layoutLines, divider, areaLimit);
+  } else {
+    for (let seed = 0; seed < count; seed += 1) {
+      if (!candidates[seed] || visited[seed]) continue;
+      let head = 0;
+      let tail = 0;
+      let minX = width;
+      let maxX = 0;
+      let minY = height;
+      let maxY = 0;
+      visited[seed] = 1;
+      queue[tail++] = seed;
 
-    while (head < tail) {
-      const index = queue[head++];
-      const x = index % width;
-      const y = Math.floor(index / width);
-      minX = Math.min(minX, x);
-      maxX = Math.max(maxX, x);
-      minY = Math.min(minY, y);
-      maxY = Math.max(maxY, y);
-      for (let dy = -1; dy <= 1; dy += 1) {
-        const ny = y + dy;
-        if (ny < 0 || ny >= height) continue;
-        for (let dx = -1; dx <= 1; dx += 1) {
-          if (dx === 0 && dy === 0) continue;
-          const nx = x + dx;
-          if (nx < 0 || nx >= width) continue;
-          const next = ny * width + nx;
-          if (candidates[next] && !visited[next]) {
-            visited[next] = 1;
-            queue[tail++] = next;
+      while (head < tail) {
+        const index = queue[head++];
+        const x = index % width;
+        const y = Math.floor(index / width);
+        minX = Math.min(minX, x);
+        maxX = Math.max(maxX, x);
+        minY = Math.min(minY, y);
+        maxY = Math.max(maxY, y);
+        for (let dy = -1; dy <= 1; dy += 1) {
+          const ny = y + dy;
+          if (ny < 0 || ny >= height) continue;
+          for (let dx = -1; dx <= 1; dx += 1) {
+            if (dx === 0 && dy === 0) continue;
+            const nx = x + dx;
+            if (nx < 0 || nx >= width) continue;
+            const next = ny * width + nx;
+            if (candidates[next] && !visited[next]) {
+              visited[next] = 1;
+              queue[tail++] = next;
+            }
           }
         }
       }
-    }
 
-    const boxWidth = maxX - minX + 1;
-    const boxHeight = maxY - minY + 1;
-    const plausibleGlyph = tail >= 2 && tail <= areaLimit
-      && boxWidth <= Math.max(8, width * 0.22)
-      && boxHeight <= Math.max(8, height * 0.72);
-    if (plausibleGlyph) {
-      for (let index = 0; index < tail; index += 1) mask[queue[index]] = 255;
+      const boxWidth = maxX - minX + 1;
+      const boxHeight = maxY - minY + 1;
+      const plausibleGlyph = tail >= 2 && tail <= areaLimit
+        && boxWidth <= Math.max(8, width * 0.22)
+        && boxHeight <= Math.max(8, height * 0.72);
+      if (plausibleGlyph) {
+        for (let index = 0; index < tail; index += 1) mask[queue[index]] = 255;
+      }
     }
   }
 
-  const divider = findAccentDivider(data, width, height);
-  if (divider) restrictInkMaskToStampLayout(mask, imageData, inkColor, divider);
+  if (divider) restrictInkMaskToStampLayout(mask, imageData, inkColor, divider, typography);
   addThinAccentMasks(data, width, height, mask, divider);
   return mask;
 }
@@ -471,34 +699,69 @@ export function detectAccentDivider(imageData) {
  * geometry around it. The two detail rows are scanned in separate divider-
  * relative bands so bright background texture cannot merge date and weekday.
  */
-export function inferStampTypography(imageData, inkColor = { r: 255, g: 255, b: 255 }, knownDivider = null) {
+export function inferStampTypography(imageData, inkColor = { r: 255, g: 255, b: 255 }, knownDivider = null, inkTolerance = 34) {
   const { width, height } = imageData ?? {};
   if (!imageData?.data || width < 16 || height < 16) return null;
   const divider = knownDivider ?? detectAccentDivider(imageData);
   if (!divider) return null;
 
-  const tolerance = 34;
+  const tolerance = clamp(inkTolerance, 20, 80);
+  const extendedTolerance = clamp(tolerance + 4, 20, 80);
+  const addressTolerance = clamp(tolerance + 2, 20, 80);
   const rightStart = divider.x + divider.w + Math.max(2, Math.round(width * 0.003));
   const rightWidth = Math.max(1, width - rightStart);
   const upperHeight = Math.max(4, Math.round(divider.h * 0.47));
   const lowerStart = divider.y + Math.round(divider.h * 0.55);
   const lowerHeight = Math.max(1, divider.y + divider.h - lowerStart);
+  const anchorDistance = Math.max(width * 0.08, divider.h * 0.9);
   const timeLine = chooseInkLine(findInkLines(imageData, {
     x: 0, y: divider.y, w: divider.x, h: divider.h,
-  }, inkColor, tolerance), divider.h * 0.35, divider.h * 1.3, divider.h * 0.3);
-  const dateLine = chooseInkLine(findInkLines(imageData, {
+  }, inkColor, tolerance), divider.h * 0.35, divider.h * 1.3, divider.h * 0.3, 0, anchorDistance);
+  // Use a conservative tolerance to keep line height tight; a second, slightly
+  // wider pass only extends horizontal bounds where colored backgrounds weaken
+  // some white strokes.
+  const dateLineBase = chooseInkLine(findInkLines(imageData, {
     x: rightStart, y: divider.y, w: rightWidth, h: upperHeight,
-  }, inkColor, tolerance), divider.h * 0.12, divider.h * 0.7, divider.h * 0.25);
+  }, inkColor, tolerance), divider.h * 0.12, divider.h * 0.7, divider.h * 0.25, rightStart, anchorDistance);
+  const dateLineExtended = chooseInkLine(findInkLines(imageData, {
+    x: rightStart, y: divider.y, w: rightWidth, h: upperHeight,
+  }, inkColor, extendedTolerance), divider.h * 0.12, divider.h * 0.7, divider.h * 0.25, rightStart, anchorDistance);
+  const dateLineWidth = Math.max(dateLineBase?.width ?? 0, dateLineExtended?.width ?? 0);
+  const dateLine = dateLineBase
+    ? {
+      ...dateLineBase,
+      width: dateLineWidth,
+      coverage: dateLineBase.inkPixels / Math.max(1, dateLineWidth * dateLineBase.height),
+    }
+    : dateLineExtended;
   const weekdayLine = chooseInkLine(findInkLines(imageData, {
     x: rightStart, y: lowerStart, w: rightWidth, h: lowerHeight,
-  }, inkColor, tolerance), divider.h * 0.12, divider.h * 0.7, divider.h * 0.2);
+  }, inkColor, tolerance), divider.h * 0.12, divider.h * 0.7, divider.h * 0.2, rightStart, anchorDistance);
   const addressStart = divider.y + divider.h + Math.round(divider.h * 0.12);
-  const addressLines = findInkLines(imageData, {
-    x: 0, y: addressStart, w: width, h: Math.max(1, height - addressStart),
-  }, inkColor, tolerance)
-    .filter((line) => line.height >= divider.h * 0.12 && line.height <= divider.h * 0.72 && line.width >= divider.h * 0.35)
+  const addressBox = { x: 0, y: addressStart, w: width, h: Math.max(1, height - addressStart) };
+  const addressLineFilter = (line) => line.height >= divider.h * 0.12
+    && line.height <= divider.h * 0.72
+    && line.width >= divider.h * 0.35
+    && line.x <= Math.max(width * 0.12, divider.h * 0.9);
+  const narrowAddressLines = findInkLines(imageData, addressBox, inkColor, addressTolerance)
+    .filter(addressLineFilter)
     .sort((a, b) => a.y - b.y)
     .slice(0, 3);
+  const extendedAddressLines = findInkLines(imageData, addressBox, inkColor, extendedTolerance)
+    .filter(addressLineFilter)
+    .sort((a, b) => a.y - b.y);
+  const addressLines = narrowAddressLines.map((line) => {
+    const extendedLine = extendedAddressLines.find((candidate) => (
+      Math.abs(candidate.x - line.x) <= Math.max(divider.h * 0.7, width * 0.035)
+      && Math.abs(candidate.y - line.y) <= Math.max(3, divider.h * 0.12)
+    ));
+    const resolvedWidth = Math.min(Math.max(line.width, extendedLine?.width ?? 0), Math.round(width * 0.56));
+    return {
+      ...line,
+      width: resolvedWidth,
+      coverage: line.inkPixels / Math.max(1, resolvedWidth * line.height),
+    };
+  });
 
   const detailLines = [dateLine, weekdayLine].filter(Boolean);
   if (!timeLine || !detailLines.length) return null;
@@ -570,11 +833,8 @@ function findInkLines(imageData, box, inkColor, tolerance) {
   const boxHeight = Math.max(0, Math.min(height - y, Math.ceil(box.h)));
   if (!data || boxWidth < 1 || boxHeight < 1) return [];
 
+  const matches = new Uint8Array(boxWidth * boxHeight);
   const rowPixels = new Uint32Array(boxHeight);
-  const rowMinX = new Int32Array(boxHeight);
-  const rowMaxX = new Int32Array(boxHeight);
-  rowMinX.fill(boxWidth);
-  rowMaxX.fill(-1);
   const maxDistance = tolerance * tolerance * 3;
   for (let row = 0; row < boxHeight; row += 1) {
     const imageY = y + row;
@@ -584,9 +844,8 @@ function findInkLines(imageData, box, inkColor, tolerance) {
       const dg = data[offset + 1] - inkColor.g;
       const db = data[offset + 2] - inkColor.b;
       if (dr * dr + dg * dg + db * db > maxDistance) continue;
+      matches[row * boxWidth + column] = 1;
       rowPixels[row] += 1;
-      rowMinX[row] = Math.min(rowMinX[row], column);
-      rowMaxX[row] = Math.max(rowMaxX[row], column);
     }
   }
 
@@ -595,37 +854,74 @@ function findInkLines(imageData, box, inkColor, tolerance) {
   for (let row = 0; row < boxHeight; row += 1) {
     if (rowPixels[row] >= rowThreshold) activeRows.push(row);
   }
-  return groupNearby(activeRows, 2).map((group) => {
-    let top = boxHeight;
-    let bottom = -1;
-    let minX = boxWidth;
-    let maxX = -1;
-    let inkPixels = 0;
-    for (let row = group.start; row <= group.end; row += 1) {
+
+  const lines = [];
+  for (const rowGroup of groupNearby(activeRows, 2)) {
+    const columnPixels = new Uint32Array(boxWidth);
+    let groupTop = boxHeight;
+    let groupBottom = -1;
+    for (let row = rowGroup.start; row <= rowGroup.end; row += 1) {
       if (!rowPixels[row]) continue;
-      top = Math.min(top, row);
-      bottom = Math.max(bottom, row);
-      minX = Math.min(minX, rowMinX[row]);
-      maxX = Math.max(maxX, rowMaxX[row]);
-      inkPixels += rowPixels[row];
+      groupTop = Math.min(groupTop, row);
+      groupBottom = Math.max(groupBottom, row);
+      const rowOffset = row * boxWidth;
+      for (let column = 0; column < boxWidth; column += 1) {
+        if (matches[rowOffset + column]) columnPixels[column] += 1;
+      }
     }
-    const lineHeight = bottom - top + 1;
-    const lineWidth = maxX - minX + 1;
-    return {
-      x: x + minX,
-      y: y + top,
-      width: lineWidth,
-      height: lineHeight,
-      inkPixels,
-      coverage: inkPixels / Math.max(1, lineWidth * lineHeight),
-    };
-  }).filter((line) => line.height >= 3 && line.width >= 4);
+
+    const lineHeight = groupBottom - groupTop + 1;
+    const columnThreshold = Math.max(1, Math.round(lineHeight * 0.04));
+    const activeColumns = [];
+    for (let column = 0; column < boxWidth; column += 1) {
+      if (columnPixels[column] >= columnThreshold) activeColumns.push(column);
+    }
+    const columnGap = Math.max(5, Math.min(48, Math.round(lineHeight * 0.55)));
+    for (const columnGroup of groupNearby(activeColumns, columnGap)) {
+      let top = groupBottom;
+      let bottom = groupTop;
+      let inkPixels = 0;
+      for (let row = groupTop; row <= groupBottom; row += 1) {
+        const rowOffset = row * boxWidth;
+        let rowHasInk = false;
+        for (let column = columnGroup.start; column <= columnGroup.end; column += 1) {
+          if (!matches[rowOffset + column]) continue;
+          inkPixels += 1;
+          rowHasInk = true;
+        }
+        if (rowHasInk) {
+          top = Math.min(top, row);
+          bottom = Math.max(bottom, row);
+        }
+      }
+      const widthOfLine = columnGroup.end - columnGroup.start + 1;
+      const heightOfLine = bottom - top + 1;
+      if (heightOfLine < 3 || widthOfLine < 4) continue;
+      lines.push({
+        x: x + columnGroup.start,
+        y: y + top,
+        width: widthOfLine,
+        height: heightOfLine,
+        inkPixels,
+        coverage: inkPixels / Math.max(1, widthOfLine * heightOfLine),
+      });
+    }
+  }
+  return lines;
 }
 
-function chooseInkLine(lines, minHeight, maxHeight, minWidth) {
-  return lines
-    .filter((line) => line.height >= minHeight && line.height <= maxHeight && line.width >= minWidth)
-    .sort((a, b) => b.inkPixels - a.inkPixels)[0] ?? null;
+function chooseInkLine(lines, minHeight, maxHeight, minWidth, anchorX = null, maxAnchorDistance = Infinity) {
+  let candidates = lines.filter((line) => line.height >= minHeight && line.height <= maxHeight && line.width >= minWidth);
+  if (!candidates.length) return null;
+  if (Number.isFinite(anchorX)) {
+    const anchored = candidates.filter((line) => Math.abs(line.x - anchorX) <= maxAnchorDistance);
+    if (anchored.length) candidates = anchored;
+    return candidates.sort((a, b) => {
+      const score = (line) => line.inkPixels / (1 + Math.abs(line.x - anchorX) / Math.max(1, maxAnchorDistance));
+      return score(b) - score(a);
+    })[0] ?? null;
+  }
+  return candidates.sort((a, b) => b.inkPixels - a.inkPixels)[0] ?? null;
 }
 
 function addThinAccentMasks(data, width, height, mask, knownDivider = null) {
@@ -728,7 +1024,16 @@ function findAccentDivider(data, width, height) {
       };
     }
   }
-  return best;
+  if (best) return best;
+  return findWarmVerticalAccent({ data, width, height }, {
+    xMinRatio: 0.06,
+    xMaxRatio: 0.62,
+    yMinRatio: 0,
+    yMaxRatio: 0.72,
+    minCountRatio: 0.18,
+    minRunRatio: 0.18,
+    maxWidthRatio: 0.015,
+  });
 }
 
 export function estimateTextMetrics(imageData, inkColor = { r: 255, g: 255, b: 255 }) {
@@ -817,8 +1122,13 @@ export function drawTimestamp(ctx, region, content, style, canvasWidth, canvasHe
   const w = Math.round(region.w * canvasWidth);
   const h = Math.round(region.h * canvasHeight);
   const normalizedContent = { ...(content ?? {}), time: formatTimeToMinutes(content?.time) };
-  const lines = [normalizedContent.weekday, normalizedContent.date, normalizedContent.time, normalizedContent.address]
-    .filter((line) => String(line ?? '').trim().length > 0);
+  const lineItems = [
+    { key: 'weekday', text: normalizedContent.weekday },
+    { key: 'date', text: normalizedContent.date },
+    { key: 'time', text: normalizedContent.time },
+    { key: 'address', text: normalizedContent.address },
+  ].filter(({ text }) => String(text ?? '').trim().length > 0);
+  const lines = lineItems.map(({ text }) => text);
   if (!lines.length || w < 1 || h < 1) return { fontSize: 0, scaled: false };
   if (stampLayout && (normalizedContent.time || normalizedContent.date || normalizedContent.weekday)) {
     return drawTimestampAroundDivider(ctx, region, normalizedContent, style, canvasWidth, canvasHeight, stampLayout);
@@ -829,10 +1139,14 @@ export function drawTimestamp(ctx, region, content, style, canvasWidth, canvasHe
   const requestedSize = Math.max(1, canvasHeight * style.fontScale);
   const lineHeight = style.lineHeight ?? 1.2;
   ctx.save();
+  const timeSizeScale = clamp(style.timeSizeScale ?? 1, 0.65, 1.4);
   ctx.font = `${style.weight ?? 600} ${requestedSize}px ${style.fontFamily ?? 'Arial, sans-serif'}`;
-  const maxTextWidth = Math.max(...lines.map((line) => ctx.measureText(line).width));
+  const maxTextWidth = Math.max(...lineItems.map(({ key, text }) => (
+    ctx.measureText(text).width * (key === 'time' ? timeSizeScale : 1)
+  )));
   const widthFit = (w - paddingX * 2) / Math.max(maxTextWidth, 1);
-  const heightFit = (h - paddingY * 2) / Math.max(lines.length * requestedSize * lineHeight, 1);
+  const requestedBlockHeight = (lines.length + Math.max(0, timeSizeScale - 1)) * requestedSize * lineHeight;
+  const heightFit = (h - paddingY * 2) / Math.max(requestedBlockHeight, 1);
   const fit = Math.min(1, widthFit, heightFit);
   const fontSize = requestedSize * fit;
   ctx.font = `${style.weight ?? 600} ${fontSize}px ${style.fontFamily ?? 'Arial, sans-serif'}`;
@@ -848,7 +1162,12 @@ export function drawTimestamp(ctx, region, content, style, canvasWidth, canvasHe
   const textX = style.align === 'right' ? x + w - paddingX : style.align === 'center' ? x + w / 2 : x + paddingX;
   const textY = y + paddingY;
   const baseline = fontSize * lineHeight;
-  lines.forEach((line, index) => ctx.fillText(line, textX, textY + index * baseline, w - paddingX * 2));
+  lineItems.forEach(({ key, text }, index) => {
+    const lineFontSize = fontSize * (key === 'time' ? timeSizeScale : 1);
+    ctx.font = `${style.weight ?? 600} ${lineFontSize}px ${style.fontFamily ?? 'Arial, sans-serif'}`;
+    const lineTop = textY + index * baseline + (fontSize - lineFontSize) / 2;
+    ctx.fillText(text, textX, lineTop, w - paddingX * 2);
+  });
   ctx.restore();
   return { fontSize, scaled: fit < 0.98 };
 }
@@ -881,7 +1200,8 @@ function drawTimestampAroundDivider(ctx, region, content, style, canvasWidth, ca
   const addressSample = addressSamples[0];
   const sourceWidths = style.sourceWidths ?? {};
   const addressSourceWidths = Array.isArray(sourceWidths.address) ? sourceWidths.address : [sourceWidths.address];
-  const timeGlyphHeight = dividerHeight * (style.timeGlyphScale ?? 0.95) * scale;
+  const timeSizeScale = clamp(style.timeSizeScale ?? 1, 0.65, 1.4);
+  const timeGlyphHeight = dividerHeight * (style.timeGlyphScale ?? 0.95) * scale * timeSizeScale;
   const detailGlyphHeight = dividerHeight * (style.detailGlyphScale ?? 0.40) * scale;
   const addressGlyphHeight = dividerHeight * (style.addressGlyphScale ?? 0.40) * scale;
   const paddingX = Math.max(5, w * (style.textPaddingRatio ?? 0.035));
@@ -891,7 +1211,7 @@ function drawTimestampAroundDivider(ctx, region, content, style, canvasWidth, ca
   const timeWidthMetrics = ctx.measureText(timeText || timeSample);
   const timeInkWidth = measuredInkWidth(timeWidthMetrics);
   const timeWidthScale = Number.isFinite(sourceWidths.time)
-    ? clamp(sourceWidths.time / Math.max(1, timeInkWidth), 0.65, 1.4)
+    ? clamp((sourceWidths.time / Math.max(1, timeInkWidth)) * timeSizeScale, 0.65, 1.4)
     : 1;
   const sourceTimeX = Number.isFinite(style.sourcePositions?.timeX) ? style.sourcePositions.timeX : null;
   const timeBearing = Number.isFinite(Number(timeWidthMetrics.actualBoundingBoxLeft))
