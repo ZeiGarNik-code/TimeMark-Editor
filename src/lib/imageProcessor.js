@@ -1,15 +1,15 @@
 import { formatTimeToMinutes } from './timeFormat.js';
 
-const CORNERS = ['top-left', 'top-right', 'bottom-left', 'bottom-right'];
+// TimeMark overlay scanning is intentionally limited to the lower-left area.
+const CORNERS = ['bottom-left'];
 
-export const DEFAULT_REGION = { x: 0.56, y: 0.70, w: 0.40, h: 0.25, corner: 'bottom-right' };
+export const DEFAULT_REGION = { x: 0.045, y: 0.705, w: 0.40, h: 0.25, corner: 'bottom-left' };
 
-/** Expand a narrow bottom-corner scan to include the complete multi-line stamp. */
-export function expandDetectedStampRegion(region, corner = region?.corner ?? 'bottom-right') {
-  if (!region || !corner.startsWith('bottom') || region.w >= 0.68) return region;
+/** Expand a narrow lower-left scan to include the complete multi-line stamp. */
+export function expandDetectedStampRegion(region, corner = region?.corner ?? 'bottom-left') {
+  if (!region || corner !== 'bottom-left' || region.w >= 0.68) return region;
   const width = 0.76;
-  const margin = 0.012;
-  const x = corner.endsWith('left') ? 0 : 1 - width - margin;
+  const x = 0;
   const bottom = Math.min(1, region.y + region.h);
   const verticalPadding = Math.max(0.045, Math.min(0.09, region.h * 0.71));
   const y = Math.max(0, region.y - verticalPadding);
@@ -24,9 +24,9 @@ export function expandDetectedStampRegion(region, corner = region?.corner ?? 'bo
 }
 
 /**
- * Estimate the timestamp block in the four corners of a photo. This is a
- * contrast/edge scan (not OCR): it suggests a starting box that the user can
- * check and reposition before exporting.
+ * Estimate the four-field timestamp block in the lower-left corner. This is
+ * a contrast/edge scan (not OCR): it suggests a starting box that the user
+ * can check and reposition before exporting.
  */
 export function scanCornerText(imageData) {
   const { data, width, height } = imageData;
@@ -34,8 +34,8 @@ export function scanCornerText(imageData) {
 
   const candidates = [];
   for (const corner of CORNERS) {
-    const zoneW = Math.max(8, Math.round(width * 0.46));
-    const zoneH = Math.max(8, Math.round(height * 0.38));
+    const zoneW = Math.max(8, Math.round(width * 0.76));
+    const zoneH = Math.max(8, Math.round(height * 0.42));
     const startX = corner.endsWith('right') ? width - zoneW : 0;
     const startY = corner.startsWith('bottom') ? height - zoneH : 0;
     const rowScores = new Float32Array(zoneH);
@@ -134,8 +134,9 @@ export function scanCornerText(imageData) {
   const highest = Math.max(...candidates.map((item) => item.score));
   const sorted = [...candidates].sort((a, b) => b.score - a.score);
   const top = sorted[0];
-  const second = sorted[1];
-  const confidence = highest <= 0 ? 0 : Math.min(0.94, Math.max(0.35, 0.52 + ((top.score - second.score) / (top.score + 1)) * 0.6));
+  const confidence = highest <= 0
+    ? 0
+    : Math.min(0.92, Math.max(0.35, 0.35 + (highest / (highest + 12)) * 0.58));
   return { ...top, confidence };
 }
 

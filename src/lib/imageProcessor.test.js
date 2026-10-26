@@ -56,11 +56,11 @@ function paintTimemarkLines(width, height, glyphScale) {
   };
 
   // Time, date, weekday, address, plus the narrow orange divider between the first two fields.
-  paintLine(0.58, 0.74, 0.09);
-  paint(width * 0.68, height * 0.735, width * 0.004, height * 0.08, [227, 179, 78, 255]);
-  paintLine(0.70, 0.74, 0.25);
-  paintLine(0.70, 0.775, 0.13);
-  paintLine(0.58, 0.83, 0.36);
+  paintLine(0.06, 0.74, 0.09);
+  paint(width * 0.16, height * 0.735, width * 0.004, height * 0.08, [227, 179, 78, 255]);
+  paintLine(0.18, 0.74, 0.25);
+  paintLine(0.18, 0.775, 0.13);
+  paintLine(0.06, 0.83, 0.36);
   return image;
 }
 
@@ -105,15 +105,19 @@ test('style estimation approximates size and alignment from repeated ink rows', 
   assert.ok(metrics.lineHeight >= 1 && metrics.lineHeight <= 1.5);
 });
 
-test('corner scanner returns a normalized suggestion for valid image data', () => {
+test('corner scanner returns a normalized suggestion from the lower-left zone only', () => {
   const source = imageData(120, 90);
-  // Add three compact, high-contrast text-like rows in the lower-right zone.
+  // Add three compact, high-contrast text-like rows in the lower-left zone.
   for (let line = 0; line < 3; line += 1) {
     for (let y = 64 + line * 8; y < 68 + line * 8; y += 1) {
-      for (let x = 75; x < 112; x += 1) {
+      for (let x = 8; x < 50; x += 1) {
         if (x % 6 < 4) source.data.set([245, 245, 245, 255], (y * source.width + x) * 4);
       }
     }
+  }
+  // Stronger text in the lower-right must not pull the scan away from the requested corner.
+  for (let y = 61; y < 86; y += 1) {
+    for (let x = 102; x < 119; x += 1) source.data.set([255, 255, 255, 255], (y * source.width + x) * 4);
   }
   const result = scanCornerText(source);
   assert.ok(result.x >= 0 && result.y >= 0);
@@ -121,10 +125,24 @@ test('corner scanner returns a normalized suggestion for valid image data', () =
   assert.ok(result.x + result.w <= 1.001);
   assert.ok(result.y + result.h <= 1.001);
   assert.ok(result.score > 0);
-  assert.equal(result.corner, 'bottom-right');
+  assert.ok(result.confidence >= 0.35 && result.confidence <= 0.92);
+  assert.equal(result.corner, 'bottom-left');
+  assert.ok(result.x < 0.1, 'the detected box should remain anchored to the lower-left');
 });
 
-test('automatic timestamp framing covers all four fields across small, panoramic, portrait and high-resolution photos', () => {
+test('an empty lower-left scan does not fall back to text in another corner', () => {
+  const source = imageData(320, 180);
+  for (let y = 130; y < 166; y += 1) {
+    for (let x = 270; x < 315; x += 1) source.data.set([250, 250, 250, 255], (y * source.width + x) * 4);
+  }
+  const result = scanCornerText(source);
+  assert.equal(result.corner, 'bottom-left');
+  assert.equal(result.score, 0);
+  assert.equal(result.confidence, 0);
+  assert.equal(result.x, 0.045);
+});
+
+test('automatic timestamp framing covers all four fields in the lower-left across small, panoramic, portrait and high-resolution photos', () => {
   const fixtures = [
     { width: 320, height: 180, glyphScale: 0.012 },
     { width: 600, height: 120, glyphScale: 0.012 },
@@ -141,10 +159,10 @@ test('automatic timestamp framing covers all four fields across small, panoramic
     const scanned = scanCornerText(resized);
     const frame = expandDetectedStampRegion(scanned, scanned.corner);
 
-    assert.equal(scanned.corner, 'bottom-right', `${fixture.width}×${fixture.height} should find the lower-right overlay`);
+    assert.equal(scanned.corner, 'bottom-left', `${fixture.width}×${fixture.height} should only find the lower-left overlay`);
     assert.ok(scanned.confidence >= 0.5, `${fixture.width}×${fixture.height} should have a confident detection`);
-    assert.ok(frame.x <= 0.58, `${fixture.width}×${fixture.height} frame should include the time field`);
-    assert.ok(frame.x + frame.w >= 0.94, `${fixture.width}×${fixture.height} frame should include the date and weekday fields`);
+    assert.ok(frame.x <= 0.06, `${fixture.width}×${fixture.height} frame should include the time field`);
+    assert.ok(frame.x + frame.w >= 0.42, `${fixture.width}×${fixture.height} frame should include the date and weekday fields`);
     assert.ok(frame.y <= 0.74, `${fixture.width}×${fixture.height} frame should include the first line`);
     assert.ok(frame.y + frame.h >= 0.83 + fixture.glyphScale, `${fixture.width}×${fixture.height} frame should include the address line`);
   }

@@ -21,8 +21,10 @@ import {
   ImagePlus,
   Info,
   MapPin,
+  Minus,
   Move,
   Pipette,
+  Plus,
   RotateCcw,
   ScanSearch,
   ShieldCheck,
@@ -50,7 +52,7 @@ const SAMPLE_PHOTO = {
   name: 'san-truong-mau.jpg',
   isSample: true,
 };
-const SAMPLE_REGION = { x: 0.565, y: 0.718, w: 0.402, h: 0.226, corner: 'bottom-right' };
+const SAMPLE_REGION = { x: 0.033, y: 0.718, w: 0.402, h: 0.226, corner: 'bottom-left' };
 const SCAN_MAX_DIMENSION = 1400;
 const SAMPLE_OLD_CONTENT = {
   weekday: 'Thứ Năm',
@@ -139,9 +141,9 @@ function loadOpenCV() {
 }
 
 function expandOcrRegion(region, corner) {
-  if (!corner.startsWith('bottom') || region.w >= 0.90) return region;
-  const width = 0.90;
-  const x = corner.endsWith('left') ? 0.015 : 1 - width - 0.015;
+  if (corner !== 'bottom-left' || region.w >= 0.76) return region;
+  const width = 0.76;
+  const x = 0.012;
   const verticalPadding = region.h < 0.15 ? Math.max(0.045, Math.min(0.09, region.h * 0.71)) : 0;
   const y = Math.max(0, region.y - verticalPadding);
   const bottom = Math.min(1, region.y + region.h);
@@ -212,13 +214,8 @@ function rgbToHex(r, g, b) {
   return `#${[r, g, b].map((channel) => Math.round(channel).toString(16).padStart(2, '0')).join('')}`;
 }
 
-function cornerName(corner) {
-  return {
-    'top-left': 'Trên trái',
-    'top-right': 'Trên phải',
-    'bottom-left': 'Dưới trái',
-    'bottom-right': 'Dưới phải',
-  }[corner] ?? 'Dưới phải';
+function cornerName() {
+  return 'Dưới trái';
 }
 
 function getTodayContent() {
@@ -266,15 +263,6 @@ function EditorHeader({ onHelp }) {
         <button className="topbar-help" onClick={onHelp}><CircleHelp size={16} /><span>Hướng dẫn</span></button>
       </div>
     </header>
-  );
-}
-
-function CornerButton({ corner, selected, onClick }) {
-  return (
-    <button className={`corner-button ${selected ? 'selected' : ''}`} onClick={onClick} aria-label={`Chọn góc ${cornerName(corner)}`} title={cornerName(corner)}>
-      <span className={`corner-mini corner-${corner}`}><i /></span>
-      <span>{cornerName(corner)}</span>
-    </button>
   );
 }
 
@@ -401,8 +389,8 @@ function App() {
   const [photoSelection, setPhotoSelection] = useState(SAMPLE_PHOTO);
   const [photo, setPhoto] = useState(null);
   const [region, setRegion] = useState(SAMPLE_REGION);
-  const [corner, setCorner] = useState('bottom-right');
-  const [scanData, setScanData] = useState({ confidence: 0.86, message: 'Ảnh mẫu · vùng được xác định sẵn' });
+  const [corner, setCorner] = useState('bottom-left');
+  const [scanData, setScanData] = useState({ confidence: 0.86, message: 'Ảnh mẫu · vùng dưới trái được xác định sẵn' });
   const [content, setContent] = useState(INITIAL_CONTENT);
   const [style, setStyle] = useState(INITIAL_STYLE);
   const [styleMatchApplied, setStyleMatchApplied] = useState(false);
@@ -413,6 +401,7 @@ function App() {
   const [showGuides, setShowGuides] = useState(true);
   const [compareOriginal, setCompareOriginal] = useState(false);
   const [isAdjusting, setIsAdjusting] = useState(false);
+  const [zoomLevel, setZoomLevel] = useState(1);
   const [dragBox, setDragBox] = useState(null);
   const [isPickingColor, setIsPickingColor] = useState(false);
   const [cleanedRegion, setCleanedRegion] = useState(null);
@@ -492,7 +481,7 @@ function App() {
       if (photoSelection.isSample) {
         initialRegion = { ...SAMPLE_REGION };
         drawTimestamp(sourceContext, initialRegion, SAMPLE_OLD_CONTENT, INITIAL_STYLE, width, height);
-        setScanData({ confidence: 0.92, message: 'Ảnh mẫu · vùng được xác định sẵn' });
+        setScanData({ confidence: 0.92, message: 'Ảnh mẫu · vùng dưới trái được xác định sẵn' });
       } else {
         const scale = Math.min(1, SCAN_MAX_DIMENSION / Math.max(width, height));
         const scanCanvas = makeCanvas(Math.max(1, Math.round(width * scale)), Math.max(1, Math.round(height * scale)));
@@ -506,15 +495,16 @@ function App() {
           );
           setScanData({ confidence: scan.confidence, message: `Gợi ý ${cornerName(scan.corner).toLowerCase()} · hãy kiểm tra khung` });
         } else {
-          initialRegion = { ...fallbackForCorner('bottom-right'), corner: 'bottom-right' };
-          setScanData({ confidence: 0.28, message: 'Chưa nhận diện rõ · đặt lại khung để chính xác hơn' });
+          initialRegion = { ...fallbackForCorner('bottom-left'), corner: 'bottom-left' };
+          setScanData({ confidence: 0.28, message: 'Chưa nhận diện rõ ở góc dưới trái · phóng to để chỉnh khung' });
         }
       }
 
       if (!cancelled) {
         setPhoto({ width, height, name: photoSelection.name, isSample: photoSelection.isSample, cleanCanvas, sourceCanvas });
         setRegion(initialRegion);
-        setCorner(initialRegion.corner ?? 'bottom-right');
+        setCorner(initialRegion.corner ?? 'bottom-left');
+        setZoomLevel(1);
         setCompareOriginal(false);
         setShowGuides(true);
       }
@@ -634,8 +624,8 @@ function App() {
     invalidateOCR();
     if (photo.isSample) {
       setRegion({ ...SAMPLE_REGION });
-      setCorner('bottom-right');
-      setScanData({ confidence: 0.92, message: 'Ảnh mẫu · vùng được xác định sẵn' });
+      setCorner('bottom-left');
+      setScanData({ confidence: 0.92, message: 'Ảnh mẫu · vùng được xác định sẵn ở góc dưới trái' });
       notify('Đã quét lại vùng mốc trên ảnh mẫu.');
       return;
     }
@@ -645,10 +635,10 @@ function App() {
     scanContext.drawImage(photo.sourceCanvas, 0, 0, scanCanvas.width, scanCanvas.height);
     const scan = scanCornerText(scanContext.getImageData(0, 0, scanCanvas.width, scanCanvas.height));
     if (scan.score <= 0 || scan.confidence < 0.37) {
-      setScanData({ confidence: 0.28, message: 'Chưa nhận diện rõ · kéo để vẽ lại khung' });
-      setRegion({ ...fallbackForCorner('bottom-right'), corner: 'bottom-right' });
-      setCorner('bottom-right');
-      notify('Chưa tìm thấy khối chữ rõ ràng. Hãy kéo trên ảnh để khoanh vùng chính xác.');
+      setScanData({ confidence: 0.28, message: 'Chưa nhận diện rõ ở góc dưới trái · có thể phóng to để chỉnh khung' });
+      setRegion({ ...fallbackForCorner('bottom-left'), corner: 'bottom-left' });
+      setCorner('bottom-left');
+      notify('Chưa tìm thấy rõ 4 mục ở góc dưới trái. Hãy phóng to ảnh rồi khoanh lại.');
       return;
     }
     const next = expandDetectedStampRegion(
@@ -685,7 +675,7 @@ function App() {
     if (isAdjusting) {
       dragStartRef.current = point;
       event.currentTarget.setPointerCapture?.(event.pointerId);
-      setDragBox({ x: point.x, y: point.y, w: 0, h: 0, corner });
+      setDragBox({ x: point.x, y: point.y, w: 0, h: 0, corner: 'bottom-left' });
     }
   };
 
@@ -697,7 +687,7 @@ function App() {
       y: Math.min(1, Math.max(0, (event.clientY - bounds.top) / bounds.height)),
     };
     const start = dragStartRef.current;
-    setDragBox({ x: Math.min(start.x, point.x), y: Math.min(start.y, point.y), w: Math.abs(point.x - start.x), h: Math.abs(point.y - start.y), corner });
+    setDragBox({ x: Math.min(start.x, point.x), y: Math.min(start.y, point.y), w: Math.abs(point.x - start.x), h: Math.abs(point.y - start.y), corner: 'bottom-left' });
   };
 
   const handleCanvasPointerUp = (event) => {
@@ -716,22 +706,12 @@ function App() {
       notify('Khung quá nhỏ. Hãy kéo một vùng rộng hơn quanh mốc thời gian.');
       return;
     }
-    const horizontal = next.x + next.w / 2 < 0.5 ? 'left' : 'right';
-    const vertical = next.y + next.h / 2 < 0.5 ? 'top' : 'bottom';
-    next.corner = `${vertical}-${horizontal}`;
+    next.corner = 'bottom-left';
     invalidateOCR();
     setRegion(next);
-    setCorner(next.corner);
-    setScanData({ confidence: 1, message: 'Vùng được chọn thủ công' });
+    setCorner('bottom-left');
+    setScanData({ confidence: 1, message: 'Vùng dưới trái được chọn thủ công' });
     notify('Đã cập nhật vùng quét.');
-  };
-
-  const selectCorner = (nextCorner) => {
-    invalidateOCR();
-    const next = fallbackForCorner(nextCorner, Math.min(region?.w ?? 0.4, 0.72), Math.min(region?.h ?? 0.25, 0.55));
-    setRegion({ ...next, corner: nextCorner });
-    setCorner(nextCorner);
-    setScanData({ confidence: 1, message: `Vị trí đã chuyển sang ${cornerName(nextCorner).toLowerCase()}` });
   };
 
   const updateContent = (key, value) => setContent((current) => ({
@@ -1083,13 +1063,14 @@ function App() {
                     <canvas
                       ref={canvasRef}
                       className="photo-canvas"
+                      style={{ transform: `scale(${zoomLevel})` }}
                       aria-label="Ảnh xem trước đã chỉnh sửa"
                       onPointerDown={handleCanvasPointerDown}
                       onPointerMove={handleCanvasPointerMove}
                       onPointerUp={handleCanvasPointerUp}
                       onPointerCancel={handleCanvasPointerUp}
                     />
-                    {(isAdjusting || isPickingColor) && <div className="stage-interaction-hint">{isPickingColor ? <><Pipette size={14} /> Chọn một điểm trên màu chữ cũ</> : <><Move size={14} /> Kéo để khoanh lại vùng mốc thời gian</>}</div>}
+                    {(isAdjusting || isPickingColor) && <div className="stage-interaction-hint">{isPickingColor ? <><Pipette size={14} /> Chọn một điểm trên màu chữ cũ</> : <><Move size={14} /> Kéo để khoanh đủ 4 mục ở góc dưới trái</>}</div>}
                   </div>
                 ) : (
                   <div className="loading-image"><div className="loading-spinner" /><span>Đang tải ảnh…</span></div>
@@ -1098,13 +1079,27 @@ function App() {
                 <div className="stage-bottom-right"><span className="stage-resolution-dot" /> Giữ nguyên kích thước</div>
               </div>
 
+              <div className="zoom-controls" aria-label="Điều khiển thu phóng ảnh">
+                <div className="zoom-controls-copy">
+                  <b>Thu phóng ảnh</b>
+                  <small>{isAdjusting ? 'Kéo để khoanh đủ 4 mục ở góc dưới trái.' : 'Phóng to góc dưới trái để chọn chính xác hơn.'}</small>
+                </div>
+                <div className="zoom-controls-actions">
+                  <button type="button" className="zoom-step-button" onClick={() => setZoomLevel((current) => Math.max(1, Number((current - 0.25).toFixed(2))))} disabled={!photo || zoomLevel <= 1} aria-label="Thu nhỏ ảnh" title="Thu nhỏ"><Minus size={16} /></button>
+                  <input className="zoom-slider" type="range" min="1" max="4" step="0.25" value={zoomLevel} onChange={(event) => setZoomLevel(Number(event.target.value))} disabled={!photo} aria-label="Mức thu phóng ảnh" />
+                  <output className="zoom-readout">{Math.round(zoomLevel * 100)}%</output>
+                  <button type="button" className="zoom-step-button" onClick={() => setZoomLevel((current) => Math.min(4, Number((current + 0.25).toFixed(2))))} disabled={!photo || zoomLevel >= 4} aria-label="Phóng to ảnh" title="Phóng to"><Plus size={16} /></button>
+                  <button type="button" className="zoom-reset-button" onClick={() => setZoomLevel(1)} disabled={!photo || zoomLevel === 1} title="Đưa ảnh về vừa khung">Vừa khung</button>
+                </div>
+              </div>
+
               <div className="preview-toolbar">
                 <div className="region-status">
                   <span className="region-status-icon"><ScanSearch size={15} /></span>
                   <span><b>Vùng chữ: {cornerName(corner).toLowerCase()}</b><small>{scanData.message}</small></span>
                 </div>
                 <div className="preview-toolbar-actions">
-                  <button className={`toolbar-button ${isAdjusting ? 'toolbar-button-on' : ''}`} onClick={() => { setCompareOriginal(false); setIsPickingColor(false); setIsAdjusting(!isAdjusting); setDragBox(null); }} disabled={!photo}><Move size={15} /> {isAdjusting ? 'Đang vẽ khung…' : 'Điều chỉnh vùng'}</button>
+                  <button className={`toolbar-button ${isAdjusting ? 'toolbar-button-on' : ''}`} onClick={() => { const nextAdjusting = !isAdjusting; setCompareOriginal(false); setIsPickingColor(false); setDragBox(null); setIsAdjusting(nextAdjusting); if (nextAdjusting) setZoomLevel((current) => Math.max(current, 1.75)); }} disabled={!photo}><Move size={15} /> {isAdjusting ? 'Đang vẽ khung…' : 'Điều chỉnh vùng'}</button>
                   <button className="toolbar-button toolbar-scan" onClick={handleScan} disabled={!photo}><ScanSearch size={15} /> Quét lại</button>
                 </div>
               </div>
@@ -1155,9 +1150,6 @@ function App() {
                       ].map(([label, value]) => <div key={label}><b>{label}</b><span className={value ? '' : 'ocr-empty-value'}>{value || 'Chưa nhận dạng'}</span></div>)}</div>
                       <button className="ocr-apply-button" onClick={applyOCRResult} disabled={!ocrResult.recognizedCount}><Check size={14} /> Áp dụng kết quả đã đọc</button>
                     </div>}
-                  </div>
-                  <div className="corner-grid" aria-label="Chọn vị trí góc">
-                    {['top-left', 'top-right', 'bottom-left', 'bottom-right'].map((item) => <CornerButton key={item} corner={item} selected={corner === item} onClick={() => selectCorner(item)} />)}
                   </div>
                   <button className="sampling-button" onClick={() => { setCompareOriginal(false); setIsAdjusting(false); setIsPickingColor(true); notify('Chạm vào màu chữ cũ trên ảnh để lấy mẫu.'); }} disabled={!photo}><Pipette size={15} /><span>Lấy màu mực cũ từ ảnh</span><ArrowRight size={14} /></button>
                   <label className="toggle-row">
