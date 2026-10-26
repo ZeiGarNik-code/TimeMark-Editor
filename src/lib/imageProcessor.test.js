@@ -185,6 +185,30 @@ test('ink mask isolates bright glyphs and a narrow saturated timestamp divider',
   assert.ok(divider.color.r > divider.color.g && divider.color.g > divider.color.b);
 });
 
+test('ink mask keeps color-matched marks inside detected timestamp lines, protecting nearby texture', () => {
+  const source = imageData(400, 180);
+  const paintRect = (x, y, width, height, color = [245, 245, 245, 255]) => {
+    for (let row = y; row < y + height; row += 1) {
+      for (let column = x; column < x + width; column += 1) {
+        source.data.set(color, (row * source.width + column) * 4);
+      }
+    }
+  };
+  paintRect(100, 20, 4, 60, [227, 179, 78, 255]);
+  paintRect(10, 22, 70, 56);
+  paintRect(112, 23, 138, 22);
+  paintRect(112, 46, 148, 9);
+  paintRect(112, 58, 78, 20);
+  paintRect(10, 96, 200, 22);
+  // A small bright surface detail is not part of any timestamp line.
+  paintRect(300, 130, 10, 8);
+
+  const mask = createInkMask(source, { r: 255, g: 255, b: 255 }, 74);
+  assert.equal(mask[30 * source.width + 20], 255, 'the time glyph should still be removed');
+  assert.equal(mask[30 * source.width + 101], 255, 'the narrow orange divider should still be removed');
+  assert.equal(mask[133 * source.width + 303], 0, 'unrelated textured highlights should not be added to the inpaint mask');
+});
+
 test('automatic typography inference uses divider-relative bands for date and weekday', () => {
   const source = imageData(400, 180);
   const paintRect = (x, y, width, height, color = [245, 245, 245, 255]) => {

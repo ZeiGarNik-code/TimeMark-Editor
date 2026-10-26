@@ -311,6 +311,44 @@ export function inpaintInk(imageData, inkColor = { r: 255, g: 255, b: 255 }, tol
     : { data: current, width, height };
 }
 
+function restrictInkMaskToStampLayout(mask, imageData, inkColor, divider) {
+  const typography = inferStampTypography(imageData, inkColor, divider);
+  const metrics = typography?.metrics;
+  if (!metrics?.time || (!metrics.date && !metrics.weekday)) return false;
+
+  const mainLines = [metrics.time, metrics.date, metrics.weekday].filter(Boolean);
+  const addressLines = Array.isArray(metrics.address) ? metrics.address : [];
+  const padX = Math.max(2, Math.round(divider.h * 0.08));
+  const padY = Math.max(2, Math.round(divider.h * 0.15));
+  const addressStart = divider.y + divider.h + padY;
+  const { width } = imageData;
+  const isLikelyTextPixel = (x, y) => {
+    const lines = y < addressStart ? mainLines : addressLines;
+    const inLineBounds = lines.some((line) => (
+      x >= line.x - padX
+      && x < line.x + line.width + padX
+      && y >= line.y - padY
+      && y < line.y + line.height + padY
+    ));
+    // If no address line was confidently detected, retain color-matched ink in
+    // the address band rather than risk leaving the user's address untouched.
+    return inLineBounds || (y >= addressStart && addressLines.length === 0);
+  };
+
+  let retained = 0;
+  for (let index = 0; index < mask.length; index += 1) {
+    if (mask[index] && isLikelyTextPixel(index % width, Math.floor(index / width))) retained += 1;
+  }
+  // Treat the layout as a useful constraint only if it still covers ink; this
+  // makes unusual fonts, colors, or cropped stamps fall back safely.
+  if (!retained) return false;
+
+  for (let index = 0; index < mask.length; index += 1) {
+    if (mask[index] && !isLikelyTextPixel(index % width, Math.floor(index / width))) mask[index] = 0;
+  }
+  return true;
+}
+
 export function createInkMask(imageData, inkColor = { r: 255, g: 255, b: 255 }, tolerance = 74) {
   const { data, width, height } = imageData;
   const count = width * height;
@@ -375,11 +413,13 @@ export function createInkMask(imageData, inkColor = { r: 255, g: 255, b: 255 }, 
     }
   }
 
-  addThinAccentMasks(data, width, height, mask);
+  const divider = findAccentDivider(data, width, height);
+  if (divider) restrictInkMaskToStampLayout(mask, imageData, inkColor, divider);
+  addThinAccentMasks(data, width, height, mask, divider);
   return mask;
 }
 
-/** Remove sampled ink with local OpenCV Telea inpainting to keep textured backgrounds crisp. */
+/** Remove sampled ink locally, preserving source pixels outside the inpaint neighbourhood. */
 export function inpaintInkWithOpenCV(imageData, inkColor, tolerance, cv) {
   const { data, width, height } = imageData;
   if (!data || width < 1 || height < 1 || !cv?.inpaint || !cv?.matFromImageData) return imageData;
@@ -395,14 +435,17 @@ export function inpaintInkWithOpenCV(imageData, inkColor, tolerance, cv) {
 
     const mask = track(new cv.Mat(height, width, cv.CV_8UC1));
     mask.data.set(maskData);
-    const kernel = track(cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(5, 5)));
+    // A single-pixel margin clears anti-aliased text edges without the broad
+    // halo that a larger dilation can create on fine background texture.
+    const kernel = track(cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(3, 3)));
     const expandedMask = track(new cv.Mat());
     cv.dilate(mask, expandedMask, kernel, new cv.Point(-1, -1), 1);
 
     const restoredRgb = track(new cv.Mat());
-    cv.inpaint(sourceRgb, expandedMask, restoredRgb, 3, cv.INPAINT_TELEA);
+    cv.inpaint(sourceRgb, expandedMask, restoredRgb, 2, cv.INPAINT_TELEA);
     const output = new Uint8ClampedArray(data);
     for (let index = 0; index < width * height; index += 1) {
+      if (!expandedMask.data[index]) continue;
       const sourceOffset = index * 3;
       const outputOffset = index * 4;
       output[outputOffset] = restoredRgb.data[sourceOffset];
@@ -428,10 +471,10 @@ export function detectAccentDivider(imageData) {
  * geometry around it. The two detail rows are scanned in separate divider-
  * relative bands so bright background texture cannot merge date and weekday.
  */
-export function inferStampTypography(imageData, inkColor = { r: 255, g: 255, b: 255 }) {
+export function inferStampTypography(imageData, inkColor = { r: 255, g: 255, b: 255 }, knownDivider = null) {
   const { width, height } = imageData ?? {};
   if (!imageData?.data || width < 16 || height < 16) return null;
-  const divider = detectAccentDivider(imageData);
+  const divider = knownDivider ?? detectAccentDivider(imageData);
   if (!divider) return null;
 
   const tolerance = 34;
@@ -585,8 +628,8 @@ function chooseInkLine(lines, minHeight, maxHeight, minWidth) {
     .sort((a, b) => b.inkPixels - a.inkPixels)[0] ?? null;
 }
 
-function addThinAccentMasks(data, width, height, mask) {
-  const divider = findAccentDivider(data, width, height);
+function addThinAccentMasks(data, width, height, mask, knownDivider = null) {
+  const divider = knownDivider ?? findAccentDivider(data, width, height);
   if (!divider) return;
   for (const index of divider.pixels) mask[index] = 255;
 }
