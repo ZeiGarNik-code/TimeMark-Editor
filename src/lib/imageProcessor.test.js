@@ -10,6 +10,60 @@ function imageData(width, height, color = [35, 48, 58, 255]) {
   return { data, width, height };
 }
 
+function resizeImageData(image, maxDimension) {
+  const scale = Math.min(1, maxDimension / Math.max(image.width, image.height));
+  if (scale === 1) return image;
+  const width = Math.max(1, Math.round(image.width * scale));
+  const height = Math.max(1, Math.round(image.height * scale));
+  const data = new Uint8ClampedArray(width * height * 4);
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const sourceX = Math.min(image.width - 1, Math.floor(x / scale));
+      const sourceY = Math.min(image.height - 1, Math.floor(y / scale));
+      const sourceOffset = (sourceY * image.width + sourceX) * 4;
+      data.set(image.data.subarray(sourceOffset, sourceOffset + 4), (y * width + x) * 4);
+    }
+  }
+  return { data, width, height };
+}
+
+function paintTimemarkLines(width, height, glyphScale) {
+  const image = imageData(width, height);
+  const paint = (x, y, boxWidth, boxHeight, color = [245, 245, 245, 255]) => {
+    const left = Math.max(0, Math.round(x));
+    const top = Math.max(0, Math.round(y));
+    const right = Math.min(width, left + Math.max(1, Math.round(boxWidth)));
+    const bottom = Math.min(height, top + Math.max(1, Math.round(boxHeight)));
+    for (let row = top; row < bottom; row += 1) {
+      for (let column = left; column < right; column += 1) {
+        image.data.set(color, (row * width + column) * 4);
+      }
+    }
+  };
+  const glyphHeight = Math.max(2, Math.round(height * glyphScale));
+  const paintLine = (xRatio, yRatio, widthRatio) => {
+    const x = width * xRatio;
+    const y = height * yRatio;
+    const step = Math.max(2, Math.round(glyphHeight * 0.6));
+    const count = Math.max(1, Math.floor((width * widthRatio) / step));
+    for (let index = 0; index < count; index += 1) {
+      const glyphX = x + index * step;
+      paint(glyphX, y, Math.max(1, glyphHeight * 0.22), glyphHeight);
+      if (index % 2 === 0) {
+        paint(glyphX, y + glyphHeight * 0.55, Math.max(2, glyphHeight * 0.48), Math.max(1, glyphHeight * 0.14));
+      }
+    }
+  };
+
+  // Time, date, weekday, address, plus the narrow orange divider between the first two fields.
+  paintLine(0.06, 0.74, 0.09);
+  paint(width * 0.16, height * 0.735, width * 0.004, height * 0.08, [227, 179, 78, 255]);
+  paintLine(0.18, 0.74, 0.25);
+  paintLine(0.18, 0.775, 0.13);
+  paintLine(0.06, 0.83, 0.36);
+  return image;
+}
+
 test('corner fallback keeps the requested overlay box inside the image', () => {
   const box = fallbackForCorner('top-left', 0.4, 0.25);
   assert.equal(box.x, 0.045);
@@ -51,15 +105,19 @@ test('style estimation approximates size and alignment from repeated ink rows', 
   assert.ok(metrics.lineHeight >= 1 && metrics.lineHeight <= 1.5);
 });
 
-test('corner scanner returns a normalized suggestion for valid image data', () => {
+test('corner scanner returns a normalized suggestion from the lower-left zone only', () => {
   const source = imageData(120, 90);
-  // Add three compact, high-contrast text-like rows in the lower-right zone.
+  // Add three compact, high-contrast text-like rows in the lower-left zone.
   for (let line = 0; line < 3; line += 1) {
     for (let y = 64 + line * 8; y < 68 + line * 8; y += 1) {
-      for (let x = 75; x < 112; x += 1) {
+      for (let x = 8; x < 50; x += 1) {
         if (x % 6 < 4) source.data.set([245, 245, 245, 255], (y * source.width + x) * 4);
       }
     }
+  }
+  // Stronger text in the lower-right must not pull the scan away from the requested corner.
+  for (let y = 61; y < 86; y += 1) {
+    for (let x = 102; x < 119; x += 1) source.data.set([255, 255, 255, 255], (y * source.width + x) * 4);
   }
   const result = scanCornerText(source);
   assert.ok(result.x >= 0 && result.y >= 0);
@@ -67,7 +125,47 @@ test('corner scanner returns a normalized suggestion for valid image data', () =
   assert.ok(result.x + result.w <= 1.001);
   assert.ok(result.y + result.h <= 1.001);
   assert.ok(result.score > 0);
-  assert.equal(result.corner, 'bottom-right');
+  assert.ok(result.confidence >= 0.35 && result.confidence <= 0.92);
+  assert.equal(result.corner, 'bottom-left');
+  assert.ok(result.x < 0.1, 'the detected box should remain anchored to the lower-left');
+});
+
+test('an empty lower-left scan does not fall back to text in another corner', () => {
+  const source = imageData(320, 180);
+  for (let y = 130; y < 166; y += 1) {
+    for (let x = 270; x < 315; x += 1) source.data.set([250, 250, 250, 255], (y * source.width + x) * 4);
+  }
+  const result = scanCornerText(source);
+  assert.equal(result.corner, 'bottom-left');
+  assert.equal(result.score, 0);
+  assert.equal(result.confidence, 0);
+  assert.equal(result.x, 0.045);
+});
+
+test('automatic timestamp framing covers all four fields in the lower-left across small, panoramic, portrait and high-resolution photos', () => {
+  const fixtures = [
+    { width: 320, height: 180, glyphScale: 0.012 },
+    { width: 600, height: 120, glyphScale: 0.012 },
+    { width: 900, height: 1600, glyphScale: 0.008 },
+    { width: 1920, height: 1080, glyphScale: 0.012 },
+    { width: 4000, height: 3000, glyphScale: 0.008 },
+  ];
+
+  for (const fixture of fixtures) {
+    const resized = resizeImageData(
+      paintTimemarkLines(fixture.width, fixture.height, fixture.glyphScale),
+      1400,
+    );
+    const scanned = scanCornerText(resized);
+    const frame = expandDetectedStampRegion(scanned, scanned.corner);
+
+    assert.equal(scanned.corner, 'bottom-left', `${fixture.width}×${fixture.height} should only find the lower-left overlay`);
+    assert.ok(scanned.confidence >= 0.5, `${fixture.width}×${fixture.height} should have a confident detection`);
+    assert.ok(frame.x <= 0.06, `${fixture.width}×${fixture.height} frame should include the time field`);
+    assert.ok(frame.x + frame.w >= 0.42, `${fixture.width}×${fixture.height} frame should include the date and weekday fields`);
+    assert.ok(frame.y <= 0.74, `${fixture.width}×${fixture.height} frame should include the first line`);
+    assert.ok(frame.y + frame.h >= 0.83 + fixture.glyphScale, `${fixture.width}×${fixture.height} frame should include the address line`);
+  }
 });
 
 test('ink mask isolates bright glyphs and a narrow saturated timestamp divider', () => {
@@ -85,6 +183,30 @@ test('ink mask isolates bright glyphs and a narrow saturated timestamp divider',
   assert.equal(mask[2 * source.width + 2], 0);
   assert.deepEqual({ x: divider.x, y: divider.y, w: divider.w, h: divider.h }, { x: 25, y: 5, w: 3, h: 23 });
   assert.ok(divider.color.r > divider.color.g && divider.color.g > divider.color.b);
+});
+
+test('ink mask keeps color-matched marks inside detected timestamp lines, protecting nearby texture', () => {
+  const source = imageData(400, 180);
+  const paintRect = (x, y, width, height, color = [245, 245, 245, 255]) => {
+    for (let row = y; row < y + height; row += 1) {
+      for (let column = x; column < x + width; column += 1) {
+        source.data.set(color, (row * source.width + column) * 4);
+      }
+    }
+  };
+  paintRect(100, 20, 4, 60, [227, 179, 78, 255]);
+  paintRect(10, 22, 70, 56);
+  paintRect(112, 23, 138, 22);
+  paintRect(112, 46, 148, 9);
+  paintRect(112, 58, 78, 20);
+  paintRect(10, 96, 200, 22);
+  // A small bright surface detail is not part of any timestamp line.
+  paintRect(300, 130, 10, 8);
+
+  const mask = createInkMask(source, { r: 255, g: 255, b: 255 }, 74);
+  assert.equal(mask[30 * source.width + 20], 255, 'the time glyph should still be removed');
+  assert.equal(mask[30 * source.width + 101], 255, 'the narrow orange divider should still be removed');
+  assert.equal(mask[133 * source.width + 303], 0, 'unrelated textured highlights should not be added to the inpaint mask');
 });
 
 test('automatic typography inference uses divider-relative bands for date and weekday', () => {
