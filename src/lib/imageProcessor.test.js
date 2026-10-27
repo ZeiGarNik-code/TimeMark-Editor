@@ -241,6 +241,36 @@ test('automatic typography inference uses divider-relative bands for date and we
   assert.ok(inferred.detailLineHeight >= 1 && inferred.detailLineHeight <= 1.8);
 });
 
+test('low-tolerance address fallback separates wrapped rows when a pale background bridges them', () => {
+  const source = imageData(600, 220);
+  const paintRect = (x, y, width, height, color = [245, 245, 245, 255]) => {
+    for (let row = y; row < y + height; row += 1) {
+      for (let column = x; column < x + width; column += 1) {
+        source.data.set(color, (row * source.width + column) * 4);
+      }
+    }
+  };
+  paintRect(100, 20, 4, 60, [227, 179, 78, 255]);
+  paintRect(10, 22, 70, 56);
+  paintRect(112, 23, 138, 22);
+  paintRect(112, 58, 78, 20);
+  // At the default tolerance this pale strip joins both address rows into an
+  // implausibly tall band. A tighter pass should recover the two white rows.
+  paintRect(10, 116, 320, 34, [220, 220, 220, 255]);
+  paintRect(10, 96, 280, 24);
+  paintRect(10, 134, 180, 18);
+
+  const inferred = inferStampTypography(source);
+  assert.ok(inferred);
+  assert.equal(inferred.metrics.address.length, 2);
+  assert.ok(inferred.metrics.address[0].y < inferred.metrics.address[1].y);
+
+  const mask = createInkMask(source, { r: 255, g: 255, b: 255 }, 74);
+  assert.equal(mask[105 * source.width + 50], 255, 'the first address row should be erased');
+  assert.equal(mask[140 * source.width + 50], 255, 'the wrapped address row should be erased');
+  assert.equal(mask[125 * source.width + 300], 0, 'the pale bridge should not be treated as address text');
+});
+
 test('light timestamp strokes use regular 400 weight to match the supplied photo more closely', () => {
   const source = imageData(400, 180);
   const paintRect = (x, y, width, height, color = [245, 245, 245, 255]) => {

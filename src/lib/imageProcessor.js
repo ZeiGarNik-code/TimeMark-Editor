@@ -392,9 +392,9 @@ export function inpaintInk(imageData, inkColor = { r: 255, g: 255, b: 255 }, tol
     }
   }
 
-  // Expand by a tiny radius so anti-aliased edges and a soft drop shadow are removed too.
+  // Expand only one pixel beyond high-confidence ink to avoid smearing nearby detail.
   const expanded = new Uint8Array(count);
-  const radius = 2;
+  const radius = 1;
   for (let index = 0; index < count; index += 1) {
     if (!mask[index]) continue;
     const x = index % width;
@@ -417,8 +417,8 @@ export function inpaintInk(imageData, inkColor = { r: 255, g: 255, b: 255 }, tol
 
   let current = new Uint8ClampedArray(data);
   let next = new Uint8ClampedArray(data);
-  // Harmonic fill: repeated four-neighbour diffusion is confined to the ink mask.
-  for (let iteration = 0; iteration < 18; iteration += 1) {
+  // Harmonic fill: keep diffusion shallow and confined to the tight ink mask.
+  for (let iteration = 0; iteration < 10; iteration += 1) {
     next.set(current);
     for (const index of maskedIndices) {
       const y = Math.floor(index / width);
@@ -509,9 +509,9 @@ function restrictInkMaskToStampLayout(mask, imageData, inkColor, divider, knownT
 function maskLineLocalComponents(candidates, visited, queue, mask, width, height, lines, divider, areaLimit) {
   // Leave room for anti-aliased edges and detached Vietnamese tone marks,
   // which often sit a few pixels outside the high-confidence glyph bounds.
-  const marginX = Math.max(2, Math.round(divider.h * 0.06));
-  const marginY = Math.max(2, Math.round(divider.h * 0.06));
   for (const line of lines) {
+    const marginX = Math.max(2, Math.round(Math.min(line.height, divider.h) * 0.04));
+    const marginY = Math.max(2, Math.round(Math.min(line.height, divider.h) * 0.04));
     const left = Math.max(0, Math.floor(line.x) - marginX);
     const right = Math.min(width, Math.ceil(line.x + line.width) + marginX);
     const top = Math.max(0, Math.floor(line.y) - marginY);
@@ -665,14 +665,14 @@ export function inpaintInkWithOpenCV(imageData, inkColor, tolerance, cv) {
 
     const mask = track(new cv.Mat(height, width, cv.CV_8UC1));
     mask.data.set(maskData);
-    // A two-pixel margin clears anti-aliased edges and light shadow fringes,
-    // while remaining localized to the detected glyph components.
-    const kernel = track(cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(5, 5)));
+    // Keep the repair halo to one pixel; larger kernels softened/warped busy
+    // backgrounds around the replaced lettering.
+    const kernel = track(cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(3, 3)));
     const expandedMask = track(new cv.Mat());
     cv.dilate(mask, expandedMask, kernel, new cv.Point(-1, -1), 1);
 
     const restoredRgb = track(new cv.Mat());
-    cv.inpaint(sourceRgb, expandedMask, restoredRgb, 3, cv.INPAINT_TELEA);
+    cv.inpaint(sourceRgb, expandedMask, restoredRgb, 2, cv.INPAINT_TELEA);
     const output = new Uint8ClampedArray(data);
     for (let index = 0; index < width * height; index += 1) {
       if (!expandedMask.data[index]) continue;
@@ -741,23 +741,20 @@ export function inferStampTypography(imageData, inkColor = { r: 255, g: 255, b: 
   }, inkColor, tolerance), divider.h * 0.12, divider.h * 0.7, divider.h * 0.2, rightStart, anchorDistance);
   const addressStart = divider.y + divider.h + Math.round(divider.h * 0.12);
   const addressBox = { x: 0, y: addressStart, w: width, h: Math.max(1, height - addressStart) };
-  const rawAddressLineFilter = (line) => line.height >= divider.h * 0.12
-    && line.height <= divider.h * 0.72
-    && line.width >= Math.max(4, divider.h * 0.08)
-    && line.x <= Math.max(width * 0.12, divider.h * 0.9);
-  const narrowAddressLines = mergeAddressLineFragments(
-    findInkLines(imageData, addressBox, inkColor, addressTolerance),
+  const addressPass = findAddressLinePass(imageData, addressBox, inkColor, divider, [
+    addressTolerance,
+    addressTolerance - 8,
+    addressTolerance - 16,
+    20,
+  ]);
+  const narrowAddressLines = addressPass.lines;
+  const extendedAddressLines = findAddressLinePass(
+    imageData,
+    addressBox,
+    inkColor,
     divider,
-  )
-    .filter(rawAddressLineFilter)
-    .sort((a, b) => a.y - b.y)
-    .slice(0, 3);
-  const extendedAddressLines = mergeAddressLineFragments(
-    findInkLines(imageData, addressBox, inkColor, extendedTolerance),
-    divider,
-  )
-    .filter(rawAddressLineFilter)
-    .sort((a, b) => a.y - b.y);
+    [addressPass.tolerance + 4, addressPass.tolerance + 8, addressPass.tolerance],
+  ).lines;
   const addressLines = narrowAddressLines.map((line) => {
     const extendedLine = extendedAddressLines.find((candidate) => (
       Math.abs(candidate.y - line.y) <= Math.max(3, divider.h * 0.16)
@@ -983,6 +980,32 @@ function mergeAddressLineFragments(lines, divider) {
       coverage: group.inkPixels / Math.max(1, width * height),
     };
   });
+}
+
+function findAddressLinePass(imageData, box, inkColor, divider, tolerances) {
+  const { width } = imageData;
+  const lineFilter = (line) => line.height >= divider.h * 0.12
+    && line.height <= divider.h * 0.72
+    && line.width >= Math.max(4, divider.h * 0.08)
+    && line.x <= Math.max(width * 0.12, divider.h * 0.9);
+  const uniqueTolerances = [...new Set(tolerances.map((value) => clamp(value, 20, 80)))];
+  let best = { tolerance: uniqueTolerances[0] ?? 34, lines: [], inkMass: 0 };
+  for (const tolerance of uniqueTolerances) {
+    const lines = mergeAddressLineFragments(
+      findInkLines(imageData, box, inkColor, tolerance),
+      divider,
+    )
+      .filter(lineFilter)
+      .sort((a, b) => a.y - b.y)
+      .slice(0, 3);
+    const inkMass = lines.reduce((sum, line) => sum + line.inkPixels, 0);
+    // Prefer a pass that finds distinct wrapped rows; use ink mass only to
+    // break ties so an overly permissive threshold cannot merge rows away.
+    if (lines.length > best.lines.length || (lines.length === best.lines.length && inkMass > best.inkMass)) {
+      best = { tolerance, lines, inkMass };
+    }
+  }
+  return best;
 }
 
 function findAccentDivider(data, width, height) {

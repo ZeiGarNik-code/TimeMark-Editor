@@ -397,7 +397,7 @@ function App() {
   const [styleMatchApplied, setStyleMatchApplied] = useState(false);
   const [fontReady, setFontReady] = useState(false);
   const [eraseColor, setEraseColor] = useState('#ffffff');
-  const [eraseTolerance, setEraseTolerance] = useState(74);
+  const [eraseTolerance, setEraseTolerance] = useState(36);
   const [eraseOld, setEraseOld] = useState(true);
   const [showGuides, setShowGuides] = useState(true);
   const [compareOriginal, setCompareOriginal] = useState(false);

@@ -26,7 +26,7 @@ test('OpenCV Telea inpainting removes bright text and its gold divider while pre
   assert.deepEqual(pixelAt(2, 2), [35, 48, 58, 255]);
 });
 
-test('OpenCV inpainting preserves textured source pixels exactly outside a tight two-pixel repair margin', () => {
+test('OpenCV inpainting preserves textured source pixels exactly outside a tight one-pixel repair margin', () => {
   const width = 96;
   const height = 72;
   const data = new Uint8ClampedArray(width * height * 4);
@@ -43,7 +43,7 @@ test('OpenCV inpainting preserves textured source pixels exactly outside a tight
   const source = { data, width, height };
   const maskData = createInkMask(source, parseHexColor('#ffffff'), 74);
   const mask = new cv.Mat(height, width, cv.CV_8UC1);
-  const kernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(5, 5));
+  const kernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(3, 3));
   const expanded = new cv.Mat();
   try {
     mask.data.set(maskData);
