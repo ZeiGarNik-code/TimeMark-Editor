@@ -507,8 +507,10 @@ function restrictInkMaskToStampLayout(mask, imageData, inkColor, divider, knownT
 // text can connect to nearby highlights; a full-crop flood then swallows the
 // entire sign or drops the connected date component as implausibly wide.
 function maskLineLocalComponents(candidates, visited, queue, mask, width, height, lines, divider, areaLimit) {
-  const marginX = Math.max(1, Math.round(divider.h * 0.02));
-  const marginY = Math.max(1, Math.round(divider.h * 0.02));
+  // Leave room for anti-aliased edges and detached Vietnamese tone marks,
+  // which often sit a few pixels outside the high-confidence glyph bounds.
+  const marginX = Math.max(2, Math.round(divider.h * 0.06));
+  const marginY = Math.max(2, Math.round(divider.h * 0.06));
   for (const line of lines) {
     const left = Math.max(0, Math.floor(line.x) - marginX);
     const right = Math.min(width, Math.ceil(line.x + line.width) + marginX);
@@ -555,9 +557,9 @@ function maskLineLocalComponents(candidates, visited, queue, mask, width, height
 
         const componentHeight = maxY - minY + 1;
         const relativeHeight = componentHeight / Math.max(1, line.height);
-        // Reject tiny dense glints while keeping character-height strokes and
-        // the narrow punctuation that is joined to a larger glyph component.
-        const plausible = tail >= 2 && tail <= componentAreaLimit && relativeHeight >= 0.26;
+        // Keep character strokes, detached Vietnamese tone marks, and
+        // punctuation; reject only isolated tiny noise components.
+        const plausible = tail >= 2 && tail <= componentAreaLimit && relativeHeight >= 0.07;
         if (plausible) {
           for (let index = 0; index < tail; index += 1) mask[queue[index]] = 255;
         }
@@ -663,14 +665,14 @@ export function inpaintInkWithOpenCV(imageData, inkColor, tolerance, cv) {
 
     const mask = track(new cv.Mat(height, width, cv.CV_8UC1));
     mask.data.set(maskData);
-    // A single-pixel margin clears anti-aliased text edges without the broad
-    // halo that a larger dilation can create on fine background texture.
-    const kernel = track(cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(3, 3)));
+    // A two-pixel margin clears anti-aliased edges and light shadow fringes,
+    // while remaining localized to the detected glyph components.
+    const kernel = track(cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(5, 5)));
     const expandedMask = track(new cv.Mat());
     cv.dilate(mask, expandedMask, kernel, new cv.Point(-1, -1), 1);
 
     const restoredRgb = track(new cv.Mat());
-    cv.inpaint(sourceRgb, expandedMask, restoredRgb, 2, cv.INPAINT_TELEA);
+    cv.inpaint(sourceRgb, expandedMask, restoredRgb, 3, cv.INPAINT_TELEA);
     const output = new Uint8ClampedArray(data);
     for (let index = 0; index < width * height; index += 1) {
       if (!expandedMask.data[index]) continue;
@@ -739,25 +741,41 @@ export function inferStampTypography(imageData, inkColor = { r: 255, g: 255, b: 
   }, inkColor, tolerance), divider.h * 0.12, divider.h * 0.7, divider.h * 0.2, rightStart, anchorDistance);
   const addressStart = divider.y + divider.h + Math.round(divider.h * 0.12);
   const addressBox = { x: 0, y: addressStart, w: width, h: Math.max(1, height - addressStart) };
-  const addressLineFilter = (line) => line.height >= divider.h * 0.12
+  const rawAddressLineFilter = (line) => line.height >= divider.h * 0.12
     && line.height <= divider.h * 0.72
-    && line.width >= divider.h * 0.35
+    && line.width >= Math.max(4, divider.h * 0.08)
     && line.x <= Math.max(width * 0.12, divider.h * 0.9);
-  const narrowAddressLines = findInkLines(imageData, addressBox, inkColor, addressTolerance)
-    .filter(addressLineFilter)
+  const narrowAddressLines = mergeAddressLineFragments(
+    findInkLines(imageData, addressBox, inkColor, addressTolerance),
+    divider,
+  )
+    .filter(rawAddressLineFilter)
     .sort((a, b) => a.y - b.y)
     .slice(0, 3);
-  const extendedAddressLines = findInkLines(imageData, addressBox, inkColor, extendedTolerance)
-    .filter(addressLineFilter)
+  const extendedAddressLines = mergeAddressLineFragments(
+    findInkLines(imageData, addressBox, inkColor, extendedTolerance),
+    divider,
+  )
+    .filter(rawAddressLineFilter)
     .sort((a, b) => a.y - b.y);
   const addressLines = narrowAddressLines.map((line) => {
     const extendedLine = extendedAddressLines.find((candidate) => (
-      Math.abs(candidate.x - line.x) <= Math.max(divider.h * 0.7, width * 0.035)
-      && Math.abs(candidate.y - line.y) <= Math.max(3, divider.h * 0.12)
+      Math.abs(candidate.y - line.y) <= Math.max(3, divider.h * 0.16)
+      && candidate.x <= line.x + Math.max(divider.h * 0.7, width * 0.035)
+      && candidate.x + candidate.width >= line.x
     ));
-    const resolvedWidth = Math.min(Math.max(line.width, extendedLine?.width ?? 0), Math.round(width * 0.56));
+    const left = Math.min(line.x, extendedLine?.x ?? line.x);
+    const candidateRight = Math.max(line.x + line.width, (extendedLine?.x ?? 0) + (extendedLine?.width ?? 0));
+    let resolvedWidth = Math.min(candidateRight - left, Math.round(width * 0.96));
+    // Only accept a large extension when the conservative pass contains enough
+    // ink to confirm a genuine long address; otherwise background highlights
+    // on the detailed market image can extend the line past its real endpoint.
+    if (resolvedWidth > line.width + Math.max(8, line.height * 0.35) && line.coverage < 0.085) {
+      resolvedWidth = line.width + Math.max(6, line.height * 0.5);
+    }
     return {
       ...line,
+      x: left,
       width: resolvedWidth,
       coverage: line.inkPixels / Math.max(1, resolvedWidth * line.height),
     };
@@ -928,6 +946,43 @@ function addThinAccentMasks(data, width, height, mask, knownDivider = null) {
   const divider = knownDivider ?? findAccentDivider(data, width, height);
   if (!divider) return;
   for (const index of divider.pixels) mask[index] = 255;
+}
+
+function mergeAddressLineFragments(lines, divider) {
+  const verticalTolerance = Math.max(3, divider.h * 0.14);
+  const groups = [];
+  for (const line of [...lines].sort((a, b) => a.y - b.y || a.x - b.x)) {
+    const centerY = line.y + line.height / 2;
+    let group = groups.find((candidate) => {
+      if (Math.abs(centerY - candidate.centerY) > verticalTolerance) return false;
+      const horizontalGap = Math.max(0, line.x - candidate.right, candidate.x - (line.x + line.width));
+      const scale = Math.max(line.height, candidate.bottom - candidate.y);
+      const maxGap = Math.max(8, Math.min(divider.h * 0.3, scale * 0.85));
+      return horizontalGap <= maxGap;
+    });
+    if (!group) {
+      group = { x: line.x, y: line.y, right: line.x + line.width, bottom: line.y + line.height, inkPixels: 0, centerY };
+      groups.push(group);
+    }
+    group.x = Math.min(group.x, line.x);
+    group.y = Math.min(group.y, line.y);
+    group.right = Math.max(group.right, line.x + line.width);
+    group.bottom = Math.max(group.bottom, line.y + line.height);
+    group.inkPixels += line.inkPixels;
+    group.centerY = (group.y + group.bottom) / 2;
+  }
+  return groups.map((group) => {
+    const width = group.right - group.x;
+    const height = group.bottom - group.y;
+    return {
+      x: group.x,
+      y: group.y,
+      width,
+      height,
+      inkPixels: group.inkPixels,
+      coverage: group.inkPixels / Math.max(1, width * height),
+    };
+  });
 }
 
 function findAccentDivider(data, width, height) {

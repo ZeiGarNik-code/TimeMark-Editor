@@ -279,6 +279,40 @@ test('light timestamp strokes use regular 400 weight to match the supplied photo
   assert.equal(inferred.timeWeight, 500);
 });
 
+test('long wrapped addresses merge same-row fragments past 56% of the crop without absorbing distant highlights', () => {
+  const source = imageData(520, 220);
+  const paintRect = (x, y, width, height, color = [245, 245, 245, 255]) => {
+    for (let row = y; row < y + height; row += 1) {
+      for (let column = x; column < x + width; column += 1) {
+        source.data.set(color, (row * source.width + column) * 4);
+      }
+    }
+  };
+  paintRect(100, 20, 4, 60, [227, 179, 78, 255]);
+  paintRect(10, 22, 70, 56);
+  paintRect(112, 23, 138, 22);
+  paintRect(112, 58, 78, 20);
+  // Simulate a long address whose low-contrast words are split into separate
+  // horizontal components by a textured background.
+  paintRect(10, 96, 210, 22);
+  paintRect(238, 96, 242, 22);
+  paintRect(10, 126, 32, 19);
+  paintRect(55, 126, 185, 19);
+  // A bright unrelated highlight on the same row but beyond the text endpoint.
+  paintRect(510, 100, 5, 8);
+
+  const inferred = inferStampTypography(source);
+  assert.ok(inferred);
+  assert.equal(inferred.metrics.address.length, 2);
+  assert.ok(inferred.metrics.address[0].width >= 450, 'the first address row should not be clipped at 56% of the crop');
+  assert.ok(inferred.metrics.address[1].x <= 10, 'the second address row should include its isolated leading fragment');
+  assert.ok(inferred.metrics.address[1].width >= 220, 'the second address row should merge nearby word fragments');
+
+  const mask = createInkMask(source, { r: 255, g: 255, b: 255 }, 74);
+  assert.equal(mask[105 * source.width + 475], 255, 'the far-right address characters should be included in the erase mask');
+  assert.equal(mask[104 * source.width + 512], 0, 'a distant highlight should remain outside the text mask');
+});
+
 test('automatic typography inference declines to guess without the orange divider', () => {
   assert.equal(inferStampTypography(imageData(180, 100)), null);
 });
