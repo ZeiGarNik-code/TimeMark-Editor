@@ -306,7 +306,7 @@ test('light timestamp strokes use regular 400 weight to match the supplied photo
   assert.ok(inferred);
   assert.ok(inferred.metrics.inkCoverage > 0.15 && inferred.metrics.inkCoverage < 0.21);
   assert.equal(inferred.weight, 400);
-  assert.equal(inferred.timeWeight, 500);
+  assert.equal(inferred.timeWeight, 600);
 });
 
 test('long wrapped addresses merge same-row fragments past 56% of the crop without absorbing distant highlights', () => {

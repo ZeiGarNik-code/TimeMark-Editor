@@ -800,7 +800,7 @@ export function inferStampTypography(imageData, inkColor = { r: 255, g: 255, b: 
     // The photo sample's time line is slightly heavier than its fine-print
     // rows. Keep the default at regular instead of making the whole stamp bold.
     weight: inkCoverage < 0.12 ? 300 : inkCoverage < 0.29 ? 400 : 700,
-    timeWeight: inkCoverage < 0.29 ? 500 : 700,
+    timeWeight: inkCoverage < 0.29 ? 600 : 700,
     timeGlyphScale: clamp(timeLine.height / divider.h, 0.55, 1.25),
     detailGlyphScale: clamp(detailGlyphHeight / divider.h, 0.18, 0.68),
     addressGlyphScale: clamp(addressGlyphHeight / divider.h, 0.18, 0.68),
