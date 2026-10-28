@@ -487,6 +487,45 @@ test('timestamp text stays aligned to the detected original divider and drops se
   assert.ok(address.y > marker.y + marker.height);
 });
 
+test('address replacement preserves the source wrap width so a prior second row is overwritten', () => {
+  const operations = [];
+  const context = {
+    font: '',
+    save() {},
+    restore() {},
+    measureText(text) {
+      const size = Number(this.font.match(/([\d.]+)px/)?.[1] ?? 12);
+      const width = String(text).length * size * 0.3;
+      return {
+        width,
+        actualBoundingBoxAscent: size * 0.70,
+        actualBoundingBoxDescent: size * 0.02,
+        actualBoundingBoxLeft: 0,
+        actualBoundingBoxRight: width,
+      };
+    },
+    translate(x, y) { operations.push({ type: 'translate', x, y }); },
+    scale(x, y) { operations.push({ type: 'scale', x, y }); },
+    fillText(text, x, y, maxWidth) { operations.push({ type: 'text', text, x, y, maxWidth }); },
+    fillRect() {},
+  };
+  drawTimestamp(context, { x: 0, y: 0, w: 1, h: 1 }, {
+    time: '10:42', date: '22 Oct', weekday: 'Tuesday',
+    address: '97/1 Phan Đăng Lưu, Cầu Kiệu, Hồ Chí Minh',
+  }, {
+    fontFamily: 'Arial, sans-serif', weight: 400, timeWeight: 500, fontScale: 0.028,
+    timeGlyphScale: 0.95, detailGlyphScale: 0.40, addressGlyphScale: 0.40,
+    addressGapRatio: 0.30, addressLineHeight: 1.08, textPaddingRatio: 0.035,
+    sourceWidths: { address: [550, 65] },
+  }, 800, 600, { x: 300, y: 100, w: 8, h: 100 });
+
+  const addressLines = operations.filter((operation) => operation.type === 'text' && (operation.text.startsWith('97/1') || operation.text === 'Minh'));
+  assert.deepEqual(addressLines.map((operation) => operation.text), [
+    '97/1 Phan Đăng Lưu, Cầu Kiệu, Hồ Chí',
+    'Minh',
+  ]);
+});
+
 test('inpainting changes sampled ink near strokes but preserves remote pixels', () => {
   const source = imageData(32, 24);
   // A small bright mark on a flat dark background.

@@ -1335,13 +1335,17 @@ function drawTimestampAroundDivider(ctx, region, content, style, canvasWidth, ca
   let addressLines = [];
   for (let attempt = 0; attempt < 4; attempt += 1) {
     ctx.font = `${weight} ${fittedAddressSize}px ${fontFamily}`;
-    const firstLineScale = addressWidthScaleForSize(fittedAddressSize, 0);
-    addressLines = wrapText(ctx, addressText, addressMaxWidth / firstLineScale);
+    addressLines = wrapTextToSourceWidths(ctx, addressText, addressSourceWidths, addressMaxWidth);
     const leading = addressLeadingForSize(fittedAddressSize);
     if (addressLines.length * leading <= addressAvailableHeight) break;
     fittedAddressSize *= addressAvailableHeight / Math.max(1, addressLines.length * leading);
   }
-  const addressLineWidthScales = addressLines.map((_, index) => addressWidthScaleForSize(fittedAddressSize, index));
+  const addressLineWidthScales = addressLines.map((line, index) => {
+    const sourceWidth = addressSourceWidths[index];
+    return Number.isFinite(sourceWidth) && sourceWidth > 0
+      ? sourceWidthScale(ctx, line, sourceWidth, fontFamily, weight, fittedAddressSize)
+      : addressWidthScaleForSize(fittedAddressSize, index);
+  });
   const timeMetrics = getTextVerticalMetrics(ctx, timeText || timeSample, fontFamily, timeWeight, timeSize);
 
   ctx.fillStyle = style.color ?? '#ffffff';
@@ -1451,6 +1455,50 @@ function wrapText(ctx, text, maxWidth) {
   }
   if (line) lines.push(line);
   return lines;
+}
+
+function wrapTextToSourceWidths(ctx, text, sourceWidths, maxWidth) {
+  const words = text.trim().split(/\s+/).filter(Boolean);
+  if (!words.length) return [];
+  const targetWidths = (sourceWidths ?? []).filter((width) => Number.isFinite(width) && width > 0);
+  if (targetWidths.length < 2) return wrapText(ctx, text, maxWidth);
+
+  const fullText = words.join(' ');
+  if (ctx.measureText(fullText).width <= targetWidths[0] * 1.12) {
+    return wrapText(ctx, fullText, maxWidth);
+  }
+
+  const lineCount = Math.min(targetWidths.length, words.length);
+  const widths = new Map();
+  const measureSegment = (start, end) => {
+    const key = `${start}:${end}`;
+    if (!widths.has(key)) widths.set(key, ctx.measureText(words.slice(start, end).join(' ')).width);
+    return widths.get(key);
+  };
+  const states = Array.from({ length: lineCount + 1 }, () => new Map());
+  states[0].set(0, { cost: 0, lines: [] });
+
+  for (let lineIndex = 0; lineIndex < lineCount; lineIndex += 1) {
+    for (const [start, state] of states[lineIndex]) {
+      const lastEnd = words.length - (lineCount - lineIndex - 1);
+      for (let end = start + 1; end <= lastEnd; end += 1) {
+        const segmentWidth = measureSegment(start, end);
+        const targetWidth = targetWidths[lineIndex] ?? targetWidths[targetWidths.length - 1];
+        const scale = clamp(targetWidth / Math.max(1, segmentWidth), 0.65, 1.4);
+        const overflow = Math.max(0, segmentWidth * scale - maxWidth) / maxWidth;
+        const cost = state.cost + Math.abs(Math.log(scale)) + overflow * 2;
+        const previous = states[lineIndex + 1].get(end);
+        if (!previous || cost < previous.cost) {
+          states[lineIndex + 1].set(end, {
+            cost,
+            lines: [...state.lines, words.slice(start, end).join(' ')],
+          });
+        }
+      }
+    }
+  }
+
+  return states[lineCount].get(words.length)?.lines ?? wrapText(ctx, fullText, maxWidth);
 }
 
 export function fallbackForCorner(corner, w = 0.40, h = 0.25) {
