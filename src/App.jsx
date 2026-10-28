@@ -70,6 +70,7 @@ const INITIAL_STYLE = {
   color: '#ffffff',
   fontScale: 0.028,
   timeGlyphScale: 0.95,
+  timeSizeScale: 1,
   detailGlyphScale: 0.36,
   addressGlyphScale: 0.34,
   lineHeight: 1.18,
@@ -396,7 +397,7 @@ function App() {
   const [styleMatchApplied, setStyleMatchApplied] = useState(false);
   const [fontReady, setFontReady] = useState(false);
   const [eraseColor, setEraseColor] = useState('#ffffff');
-  const [eraseTolerance, setEraseTolerance] = useState(74);
+  const [eraseTolerance, setEraseTolerance] = useState(36);
   const [eraseOld, setEraseOld] = useState(true);
   const [showGuides, setShowGuides] = useState(true);
   const [compareOriginal, setCompareOriginal] = useState(false);
@@ -1157,7 +1158,7 @@ function App() {
                     <input type="checkbox" checked={eraseOld} onChange={(event) => setEraseOld(event.target.checked)} />
                     <span className="toggle-track" aria-hidden="true"><i /></span>
                   </label>
-                  {eraseOld && !photo?.isSample && <RangeControl label="Độ nhạy khi xoá" min={30} max={140} step={2} value={eraseTolerance} onChange={setEraseTolerance} display={`${eraseTolerance}`} hint="Tăng nhẹ nếu nét chữ cũ còn sót." />}
+                  {eraseOld && !photo?.isSample && <RangeControl label="Độ nhạy khi xoá" min={30} max={140} step={2} value={eraseTolerance} onChange={setEraseTolerance} display={`${eraseTolerance}`} hint="Tăng nếu còn sót chữ; giảm nếu nền bị ảnh hưởng nhiều." />}
                 </section>
 
                 <div className="inspector-divider" />
@@ -1170,6 +1171,7 @@ function App() {
                     <label className="color-picker" title="Chọn màu chữ mới"><input type="color" value={style.color} onChange={(event) => updateStyle('color', event.target.value)} /><span>{style.color.toUpperCase()}</span><ChevronDown size={13} /></label>
                   </div>
                   <RangeControl label="Tỉ lệ cỡ chữ" min={0.016} max={0.046} step={0.001} value={style.fontScale} onChange={(value) => updateStyle('fontScale', value)} display={`${Math.round(style.fontScale / 0.028 * 100)}%`} hint="Từng trường được tự tính riêng; thanh này phóng to/thu nhỏ toàn bộ." />
+                  <RangeControl label="Cỡ riêng dòng giờ" min={0.65} max={1.4} step={0.01} value={style.timeSizeScale} onChange={(value) => updateStyle('timeSizeScale', value)} display={`${Math.round(style.timeSizeScale * 100)}%`} hint="Chỉ thay đổi giờ; ngày, thứ và địa điểm không đổi." />
                   <RangeControl label="Khoảng cách dòng" min={1.0} max={1.5} step={0.01} value={style.lineHeight} onChange={(value) => updateStyle('lineHeight', value)} display={`${style.lineHeight.toFixed(2)}×`} />
                   <div className="style-options-row">
                     <div className="align-picker" aria-label="Căn lề chữ">

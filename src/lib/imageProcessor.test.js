@@ -241,6 +241,36 @@ test('automatic typography inference uses divider-relative bands for date and we
   assert.ok(inferred.detailLineHeight >= 1 && inferred.detailLineHeight <= 1.8);
 });
 
+test('low-tolerance address fallback separates wrapped rows when a pale background bridges them', () => {
+  const source = imageData(600, 220);
+  const paintRect = (x, y, width, height, color = [245, 245, 245, 255]) => {
+    for (let row = y; row < y + height; row += 1) {
+      for (let column = x; column < x + width; column += 1) {
+        source.data.set(color, (row * source.width + column) * 4);
+      }
+    }
+  };
+  paintRect(100, 20, 4, 60, [227, 179, 78, 255]);
+  paintRect(10, 22, 70, 56);
+  paintRect(112, 23, 138, 22);
+  paintRect(112, 58, 78, 20);
+  // At the default tolerance this pale strip joins both address rows into an
+  // implausibly tall band. A tighter pass should recover the two white rows.
+  paintRect(10, 116, 320, 34, [220, 220, 220, 255]);
+  paintRect(10, 96, 280, 24);
+  paintRect(10, 134, 180, 18);
+
+  const inferred = inferStampTypography(source);
+  assert.ok(inferred);
+  assert.equal(inferred.metrics.address.length, 2);
+  assert.ok(inferred.metrics.address[0].y < inferred.metrics.address[1].y);
+
+  const mask = createInkMask(source, { r: 255, g: 255, b: 255 }, 74);
+  assert.equal(mask[105 * source.width + 50], 255, 'the first address row should be erased');
+  assert.equal(mask[140 * source.width + 50], 255, 'the wrapped address row should be erased');
+  assert.equal(mask[125 * source.width + 300], 0, 'the pale bridge should not be treated as address text');
+});
+
 test('light timestamp strokes use regular 400 weight to match the supplied photo more closely', () => {
   const source = imageData(400, 180);
   const paintRect = (x, y, width, height, color = [245, 245, 245, 255]) => {
@@ -277,6 +307,40 @@ test('light timestamp strokes use regular 400 weight to match the supplied photo
   assert.ok(inferred.metrics.inkCoverage > 0.15 && inferred.metrics.inkCoverage < 0.21);
   assert.equal(inferred.weight, 400);
   assert.equal(inferred.timeWeight, 500);
+});
+
+test('long wrapped addresses merge same-row fragments past 56% of the crop without absorbing distant highlights', () => {
+  const source = imageData(520, 220);
+  const paintRect = (x, y, width, height, color = [245, 245, 245, 255]) => {
+    for (let row = y; row < y + height; row += 1) {
+      for (let column = x; column < x + width; column += 1) {
+        source.data.set(color, (row * source.width + column) * 4);
+      }
+    }
+  };
+  paintRect(100, 20, 4, 60, [227, 179, 78, 255]);
+  paintRect(10, 22, 70, 56);
+  paintRect(112, 23, 138, 22);
+  paintRect(112, 58, 78, 20);
+  // Simulate a long address whose low-contrast words are split into separate
+  // horizontal components by a textured background.
+  paintRect(10, 96, 210, 22);
+  paintRect(238, 96, 242, 22);
+  paintRect(10, 126, 32, 19);
+  paintRect(55, 126, 185, 19);
+  // A bright unrelated highlight on the same row but beyond the text endpoint.
+  paintRect(510, 100, 5, 8);
+
+  const inferred = inferStampTypography(source);
+  assert.ok(inferred);
+  assert.equal(inferred.metrics.address.length, 2);
+  assert.ok(inferred.metrics.address[0].width >= 450, 'the first address row should not be clipped at 56% of the crop');
+  assert.ok(inferred.metrics.address[1].x <= 10, 'the second address row should include its isolated leading fragment');
+  assert.ok(inferred.metrics.address[1].width >= 220, 'the second address row should merge nearby word fragments');
+
+  const mask = createInkMask(source, { r: 255, g: 255, b: 255 }, 74);
+  assert.equal(mask[105 * source.width + 475], 255, 'the far-right address characters should be included in the erase mask');
+  assert.equal(mask[104 * source.width + 512], 0, 'a distant highlight should remain outside the text mask');
 });
 
 test('automatic typography inference declines to guess without the orange divider', () => {
@@ -326,6 +390,65 @@ test('matched time uses the source glyph width and ink left edge for replacement
   assert.match(renderedTime.font, /^500 /);
 });
 
+test('time-only size scale changes the clock without scaling date, weekday or address settings', () => {
+  const context = {
+    font: '',
+    save() {},
+    restore() {},
+    measureText(text) {
+      const size = Number(this.font.match(/([\d.]+)px/)?.[1] ?? 12);
+      return {
+        width: String(text).length * size * 0.5,
+        actualBoundingBoxAscent: size * 0.72,
+        actualBoundingBoxDescent: size * 0.02,
+      };
+    },
+    fillText() {},
+    fillRect() {},
+  };
+  const args = [
+    context,
+    { x: 0, y: 0, w: 1, h: 1 },
+    { time: '08:35', date: '25 Tháng 10, 2026', weekday: 'Chủ Nhật', address: 'Chợ Bến Thành' },
+  ];
+  const style = {
+    color: '#ffffff', fontScale: 0.028, timeGlyphScale: 0.9, timeSizeScale: 1,
+    detailGlyphScale: 0.36, addressGlyphScale: 0.34, weight: 400, timeWeight: 500,
+    fontFamily: 'Arial, sans-serif', shadow: false,
+  };
+  const normal = drawTimestamp(...args, style, 1000, 1000, { x: 220, y: 20, w: 6, h: 90 });
+  const larger = drawTimestamp(...args, { ...style, timeSizeScale: 1.25 }, 1000, 1000, { x: 220, y: 20, w: 6, h: 90 });
+  assert.ok(Math.abs(larger.fontSize / normal.fontSize - 1.25) < 0.001);
+
+  const widthScales = [];
+  const matchedContext = {
+    ...context,
+    translate() {},
+    scale(x) { widthScales.push(x); },
+  };
+  const matchedStyle = { ...style, sourceWidths: { time: 120 } };
+  const matchedNormal = drawTimestamp(matchedContext, args[1], args[2], matchedStyle, 1000, 1000, { x: 220, y: 20, w: 6, h: 90 });
+  const matchedLarger = drawTimestamp(matchedContext, args[1], args[2], { ...matchedStyle, timeSizeScale: 1.25 }, 1000, 1000, { x: 220, y: 20, w: 6, h: 90 });
+  assert.ok(Math.abs((matchedLarger.fontSize * widthScales[1]) / (matchedNormal.fontSize * widthScales[0]) - 1.25) < 0.001);
+
+  const fallbackFonts = [];
+  const fallbackContext = {
+    font: '',
+    save() {},
+    restore() {},
+    measureText(text) {
+      const size = Number(this.font.match(/([\d.]+)px/)?.[1] ?? 12);
+      return { width: String(text).length * size * 0.5 };
+    },
+    fillText(text) { fallbackFonts.push({ text, font: this.font }); },
+  };
+  drawTimestamp(fallbackContext, { x: 0, y: 0, w: 1, h: 1 }, args[2], {
+    ...style, timeSizeScale: 1.25,
+  }, 1000, 1000);
+  const fontSize = (text) => Number(fallbackFonts.find((line) => line.text === text)?.font.match(/([\d.]+)px/)?.[1]);
+  assert.ok(Math.abs(fontSize('08:35') / fontSize('25 Tháng 10, 2026') - 1.25) < 0.001);
+});
+
 test('timestamp text stays aligned to the detected original divider and drops seconds', () => {
   const operations = [];
   const context = {
@@ -362,6 +485,45 @@ test('timestamp text stays aligned to the detected original divider and drops se
   assert.ok(date.x > marker.x + marker.width);
   assert.ok(weekday.x > marker.x + marker.width);
   assert.ok(address.y > marker.y + marker.height);
+});
+
+test('address replacement preserves the source wrap width so a prior second row is overwritten', () => {
+  const operations = [];
+  const context = {
+    font: '',
+    save() {},
+    restore() {},
+    measureText(text) {
+      const size = Number(this.font.match(/([\d.]+)px/)?.[1] ?? 12);
+      const width = String(text).length * size * 0.3;
+      return {
+        width,
+        actualBoundingBoxAscent: size * 0.70,
+        actualBoundingBoxDescent: size * 0.02,
+        actualBoundingBoxLeft: 0,
+        actualBoundingBoxRight: width,
+      };
+    },
+    translate(x, y) { operations.push({ type: 'translate', x, y }); },
+    scale(x, y) { operations.push({ type: 'scale', x, y }); },
+    fillText(text, x, y, maxWidth) { operations.push({ type: 'text', text, x, y, maxWidth }); },
+    fillRect() {},
+  };
+  drawTimestamp(context, { x: 0, y: 0, w: 1, h: 1 }, {
+    time: '10:42', date: '22 Oct', weekday: 'Tuesday',
+    address: '97/1 Phan Đăng Lưu, Cầu Kiệu, Hồ Chí Minh',
+  }, {
+    fontFamily: 'Arial, sans-serif', weight: 400, timeWeight: 500, fontScale: 0.028,
+    timeGlyphScale: 0.95, detailGlyphScale: 0.40, addressGlyphScale: 0.40,
+    addressGapRatio: 0.30, addressLineHeight: 1.08, textPaddingRatio: 0.035,
+    sourceWidths: { address: [550, 65] },
+  }, 800, 600, { x: 300, y: 100, w: 8, h: 100 });
+
+  const addressLines = operations.filter((operation) => operation.type === 'text' && (operation.text.startsWith('97/1') || operation.text === 'Minh'));
+  assert.deepEqual(addressLines.map((operation) => operation.text), [
+    '97/1 Phan Đăng Lưu, Cầu Kiệu, Hồ Chí',
+    'Minh',
+  ]);
 });
 
 test('inpainting changes sampled ink near strokes but preserves remote pixels', () => {

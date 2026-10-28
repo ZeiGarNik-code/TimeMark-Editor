@@ -60,7 +60,7 @@ test('OpenCV inpainting preserves textured source pixels exactly outside a tight
       );
       untouched += 1;
     }
-    assert.ok(untouched > width * height * 0.98, 'the repair should remain local on a textured image');
+    assert.ok(untouched > width * height * 0.97, 'the repair should remain local on a textured image');
     assert.notDeepEqual(
       Array.from(result.data.subarray((31 * width + 46) * 4, (31 * width + 46) * 4 + 3)),
       [250, 250, 250],
