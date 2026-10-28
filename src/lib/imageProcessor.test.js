@@ -420,6 +420,10 @@ test('time-only size scale changes the clock without scaling date, weekday or ad
   const larger = drawTimestamp(...args, { ...style, timeSizeScale: 1.25 }, 1000, 1000, { x: 220, y: 20, w: 6, h: 90 });
   assert.ok(Math.abs(larger.fontSize / normal.fontSize - 1.25) < 0.001);
 
+  const globallySmaller = drawTimestamp(...args, { ...style, fontSizeScale: 0.70 }, 1000, 1000, { x: 220, y: 20, w: 6, h: 90 });
+  const globallyLarger = drawTimestamp(...args, { ...style, fontSizeScale: 1.30 }, 1000, 1000, { x: 220, y: 20, w: 6, h: 90 });
+  assert.ok(Math.abs(globallyLarger.fontSize / globallySmaller.fontSize - (1.30 / 0.70)) < 0.001);
+
   const widthScales = [];
   const matchedContext = {
     ...context,
@@ -487,7 +491,7 @@ test('timestamp text stays aligned to the detected original divider and drops se
   assert.ok(address.y > marker.y + marker.height);
 });
 
-test('address replacement preserves the source wrap width so a prior second row is overwritten', () => {
+test('address drawing preserves only customer-entered line breaks and never wraps text automatically', () => {
   const operations = [];
   const context = {
     font: '',
@@ -509,20 +513,36 @@ test('address replacement preserves the source wrap width so a prior second row 
     fillText(text, x, y, maxWidth) { operations.push({ type: 'text', text, x, y, maxWidth }); },
     fillRect() {},
   };
-  drawTimestamp(context, { x: 0, y: 0, w: 1, h: 1 }, {
-    time: '10:42', date: '22 Oct', weekday: 'Tuesday',
-    address: '97/1 Phan Đăng Lưu, Cầu Kiệu, Hồ Chí Minh',
-  }, {
+  const region = { x: 0, y: 0, w: 1, h: 1 };
+  const style = {
     fontFamily: 'Arial, sans-serif', weight: 400, timeWeight: 500, fontScale: 0.028,
     timeGlyphScale: 0.95, detailGlyphScale: 0.40, addressGlyphScale: 0.40,
     addressGapRatio: 0.30, addressLineHeight: 1.08, textPaddingRatio: 0.035,
     sourceWidths: { address: [550, 65] },
-  }, 800, 600, { x: 300, y: 100, w: 8, h: 100 });
+  };
+  const divider = { x: 300, y: 100, w: 8, h: 100 };
+  const firstLine = '97/1 Phan Đăng Lưu, Cầu Kiều, Hồ Chí';
+  drawTimestamp(context, region, {
+    time: '10:42', date: '22 Oct', weekday: 'Tuesday', address: `${firstLine}\nMinh`,
+  }, style, 800, 600, divider);
 
-  const addressLines = operations.filter((operation) => operation.type === 'text' && (operation.text.startsWith('97/1') || operation.text === 'Minh'));
-  assert.deepEqual(addressLines.map((operation) => operation.text), [
-    '97/1 Phan Đăng Lưu, Cầu Kiệu, Hồ Chí',
-    'Minh',
+  const addressLines = () => operations.filter((operation) => operation.type === 'text' && (operation.text.startsWith('97/1') || operation.text === 'Minh'));
+  assert.deepEqual(addressLines().map((operation) => operation.text), [firstLine, 'Minh']);
+
+  operations.length = 0;
+  const unbrokenAddress = `${firstLine} Minh ${'địa chỉ dài '.repeat(8)}`;
+  drawTimestamp(context, region, {
+    time: '10:42', date: '22 Oct', weekday: 'Tuesday', address: unbrokenAddress,
+  }, style, 800, 600, divider);
+  assert.deepEqual(addressLines().map((operation) => operation.text), [unbrokenAddress.trim()]);
+
+  operations.length = 0;
+  drawTimestamp(context, region, {
+    time: '', date: '', weekday: '', address: 'First manual row\nSecond manual row',
+  }, style, 800, 600);
+  assert.deepEqual(operations.filter((operation) => operation.type === 'text').map((operation) => operation.text), [
+    'First manual row',
+    'Second manual row',
   ]);
 });
 

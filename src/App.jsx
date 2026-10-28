@@ -69,6 +69,7 @@ const INITIAL_CONTENT = {
 const INITIAL_STYLE = {
   color: '#ffffff',
   fontScale: 0.028,
+  fontSizeScale: 1,
   timeGlyphScale: 0.95,
   timeSizeScale: 1,
   detailGlyphScale: 0.36,
@@ -267,12 +268,13 @@ function EditorHeader({ onHelp }) {
   );
 }
 
-function RangeControl({ label, value, min, max, step, onChange, display, hint }) {
+function RangeControl({ id, label, value, min, max, step, onChange, display, hint }) {
+  const inputId = id ?? `range-${label.toLowerCase().replace(/\s+/g, '-')}`;
   const percent = ((Number(value) - Number(min)) / (Number(max) - Number(min))) * 100;
   return (
     <div className="range-control">
-      <div className="range-heading"><label>{label}</label><span>{display}</span></div>
-      <input className="range-input" type="range" min={min} max={max} step={step} value={value} style={{ '--range-progress': `${percent}%` }} onChange={(event) => onChange(Number(event.target.value))} />
+      <div className="range-heading"><label htmlFor={inputId}>{label}</label><span>{display}</span></div>
+      <input id={inputId} className="range-input" type="range" min={min} max={max} step={step} value={value} aria-valuetext={display} style={{ '--range-progress': `${percent}%` }} onChange={(event) => onChange(Number(event.target.value))} />
       {hint && <small className="range-hint">{hint}</small>}
     </div>
   );
@@ -614,6 +616,7 @@ function App() {
     const url = URL.createObjectURL(file);
     setPhotoSelection({ id: `${file.name}-${file.lastModified}-${Date.now()}`, src: url, name: file.name, isSample: false });
     setEraseColor('#ffffff');
+    setStyle((current) => ({ ...current, fontSizeScale: 1 }));
     setCompareOriginal(false);
     setIsAdjusting(false);
     notify('Đã mở ảnh. Vùng chữ là gợi ý tự động — hãy kiểm tra trước khi tải xuống.');
@@ -989,6 +992,10 @@ function App() {
     }
   };
 
+  const visibleLineCount = [content.weekday, content.date, content.time]
+    .filter((line) => String(line ?? '').trim()).length
+    + String(content.address ?? '').split(/\r?\n/).filter((line) => line.trim()).length;
+
   return (
     <div className="app-shell">
       <aside className="sidebar">
@@ -1104,13 +1111,13 @@ function App() {
                   <button className="toolbar-button toolbar-scan" onClick={handleScan} disabled={!photo}><ScanSearch size={15} /> Quét lại</button>
                 </div>
               </div>
-              {textScaled && !compareOriginal && <div className="fit-warning"><Info size={14} /> Một dòng dài hơn khung — cỡ chữ được thu nhỏ để vừa vùng đã chọn.</div>}
+              {textScaled && !compareOriginal && <div className="fit-warning"><Info size={14} /> Địa chỉ đã được thu nhỏ để vừa vùng chọn. Hãy kiểm tra khung nếu chữ nhỏ hơn mong muốn.</div>}
             </section>
 
             <aside className="inspector-panel">
               <div className="inspector-heading">
                 <div><span className="inspector-kicker">THÔNG TIN HIỂN THỊ</span><h2>Nội dung trên ảnh</h2></div>
-                <span className="line-count">{[content.weekday, content.date, content.time, content.address].filter((line) => String(line ?? '').trim()).length.toString().padStart(2, '0')} dòng</span>
+                <span className="line-count">{visibleLineCount.toString().padStart(2, '0')} dòng</span>
               </div>
               <div className="inspector-scroll">
                 <div className="content-section">
@@ -1119,7 +1126,7 @@ function App() {
                     <div className="editor-field"><label htmlFor="date">Ngày</label><input id="date" value={content.date} onChange={(event) => updateContent('date', event.target.value)} placeholder="24 tháng 10, 2026" /></div>
                   </div>
                   <div className="editor-field time-field"><label htmlFor="time"><Clock3 size={14} /> Giờ · HH:MM</label><div className="field-action-wrap"><input id="time" type="time" step="60" value={formatTimeToMinutes(content.time)} onChange={(event) => updateContent('time', event.target.value)} aria-label="Giờ, chỉ gồm giờ và phút" /><button className="field-inline-action" onClick={useCurrentTime} title="Dùng ngày giờ hiện tại"><RotateCcw size={14} /><span>Bây giờ</span></button></div></div>
-                  <div className="editor-field address-field"><label htmlFor="address"><MapPin size={14} /> Địa chỉ / địa điểm</label><input id="address" value={content.address} onChange={(event) => updateContent('address', event.target.value)} placeholder="Tên trường hoặc địa chỉ" /></div>
+                  <div className="editor-field address-field"><label htmlFor="address"><MapPin size={14} /> Địa chỉ / địa điểm</label><textarea id="address" rows={3} value={content.address} onChange={(event) => updateContent('address', event.target.value)} placeholder="Tên trường hoặc địa chỉ" aria-describedby="address-break-hint" /><small id="address-break-hint" className="address-break-hint">Nhấn Enter để xuống dòng. Ứng dụng không tự ngắt dòng.</small></div>
                 </div>
 
                 <div className="inspector-divider" />
@@ -1158,7 +1165,10 @@ function App() {
                     <input type="checkbox" checked={eraseOld} onChange={(event) => setEraseOld(event.target.checked)} />
                     <span className="toggle-track" aria-hidden="true"><i /></span>
                   </label>
-                  {eraseOld && !photo?.isSample && <RangeControl label="Độ nhạy khi xoá" min={30} max={140} step={2} value={eraseTolerance} onChange={setEraseTolerance} display={`${eraseTolerance}`} hint="Tăng nếu còn sót chữ; giảm nếu nền bị ảnh hưởng nhiều." />}
+                  {eraseOld && !photo?.isSample && <>
+                    <RangeControl label="Độ nhạy khi xoá" min={30} max={140} step={2} value={eraseTolerance} onChange={setEraseTolerance} display={`${eraseTolerance}`} hint="Tăng nếu còn sót chữ; giảm nếu nền bị ảnh hưởng nhiều." />
+                    <div className="cleanup-limit-note"><Info size={12} /> Nền bị chữ che chỉ có thể ước tính lại; hãy phóng to kiểm tra trước khi xuất.</div>
+                  </>}
                 </section>
 
                 <div className="inspector-divider" />
@@ -1170,7 +1180,7 @@ function App() {
                     <div className="style-color-label"><span className="color-swatch" style={{ background: style.color }} /><span><b>Màu chữ mới</b><small>Áp dụng cho 4 dòng</small></span></div>
                     <label className="color-picker" title="Chọn màu chữ mới"><input type="color" value={style.color} onChange={(event) => updateStyle('color', event.target.value)} /><span>{style.color.toUpperCase()}</span><ChevronDown size={13} /></label>
                   </div>
-                  <RangeControl label="Tỉ lệ cỡ chữ" min={0.016} max={0.046} step={0.001} value={style.fontScale} onChange={(value) => updateStyle('fontScale', value)} display={`${Math.round(style.fontScale / 0.028 * 100)}%`} hint="Từng trường được tự tính riêng; thanh này phóng to/thu nhỏ toàn bộ." />
+                  <RangeControl label="Cỡ chữ toàn bộ" min={0.65} max={1.35} step={0.05} value={style.fontSizeScale} onChange={(value) => updateStyle('fontSizeScale', value)} display={`${Math.round(style.fontSizeScale * 100)}%`} hint="Điều khiển trực tiếp cỡ chữ giờ, ngày, thứ và địa điểm · 100% là cỡ khớp ảnh gốc." />
                   <RangeControl label="Cỡ riêng dòng giờ" min={0.65} max={1.4} step={0.01} value={style.timeSizeScale} onChange={(value) => updateStyle('timeSizeScale', value)} display={`${Math.round(style.timeSizeScale * 100)}%`} hint="Chỉ thay đổi giờ; ngày, thứ và địa điểm không đổi." />
                   <RangeControl label="Khoảng cách dòng" min={1.0} max={1.5} step={0.01} value={style.lineHeight} onChange={(value) => updateStyle('lineHeight', value)} display={`${style.lineHeight.toFixed(2)}×`} />
                   <div className="style-options-row">
