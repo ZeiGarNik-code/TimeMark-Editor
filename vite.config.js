@@ -5,6 +5,9 @@ export default defineConfig({
   // GitHub Pages serves this repository beneath /TimeMark-Editor/.
   base: process.env.GITHUB_ACTIONS === 'true' ? '/TimeMark-Editor/' : '/',
   plugins: [react()],
+  resolve: {
+    conditions: ['module', 'browser', 'development|production', 'onnxruntime-web-use-extern-wasm'],
+  },
   server: {
     host: '0.0.0.0',
     allowedHosts: true,

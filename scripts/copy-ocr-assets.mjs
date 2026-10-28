@@ -8,6 +8,8 @@ const coreRoot = join(root, 'node_modules', 'tesseract.js-core');
 const tesseractRoot = join(root, 'node_modules', 'tesseract.js');
 const languageRoot = join(root, 'node_modules', '@tesseract.js-data');
 const visionRoot = join(root, 'node_modules', '@techstark', 'opencv-js');
+const ortRoot = join(root, 'node_modules', 'onnxruntime-web', 'dist');
+const localAiRoot = join(root, 'public', 'ai', 'ort');
 
 const assets = [
   [join(tesseractRoot, 'dist', 'worker.min.js'), join(publicRoot, 'worker.min.js')],
@@ -39,6 +41,15 @@ for (const [source, destination] of assets) {
 await copyFile(join(tesseractRoot, 'LICENSE.md'), join(publicRoot, 'LICENSE.tesseract.js.md'));
 await copyFile(join(coreRoot, 'LICENSE'), join(publicRoot, 'LICENSE.tesseract-core'));
 await copyFile(join(visionRoot, 'LICENSE'), join(publicRoot, 'LICENSE.opencv-js'));
+
+await mkdir(localAiRoot, { recursive: true });
+for (const filename of [
+  'ort-wasm-simd-threaded.asyncify.mjs',
+  'ort-wasm-simd-threaded.asyncify.wasm',
+]) {
+  await copyFile(join(ortRoot, filename), join(localAiRoot, filename));
+}
+
 await writeFile(join(publicRoot, 'NOTICE.txt'), [
   'OCR runtime: Tesseract.js 7, licensed under Apache-2.0.',
   'Tesseract.js-core assets are licensed under Apache-2.0.',
@@ -48,4 +59,4 @@ await writeFile(join(publicRoot, 'NOTICE.txt'), [
   '',
 ].join('\n'));
 
-console.log(`Prepared ${assets.length} local OCR and vision assets in public/ocr.`);
+console.log(`Prepared ${assets.length} OCR/vision assets and local ONNX Runtime files.`);
