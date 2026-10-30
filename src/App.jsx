@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { createWorker, PSM } from 'tesseract.js';
 import { parseTimemarkOCR } from './lib/ocrParser.js';
 import { formatTimeToMinutes } from './lib/timeFormat.js';
+import { createLocalAiMask, runLocalAiCleanup } from './lib/localAiCleanup.js';
 import {
   AlignCenter,
   AlignLeft,
@@ -34,6 +35,7 @@ import {
   X,
 } from 'lucide-react';
 import {
+  createInkMask,
   detectAccentDivider,
   drawTimestamp,
   estimateTextMetrics,
@@ -69,6 +71,7 @@ const INITIAL_CONTENT = {
 const INITIAL_STYLE = {
   color: '#ffffff',
   fontScale: 0.028,
+  fontSizeScale: 1,
   timeGlyphScale: 0.95,
   timeSizeScale: 1,
   detailGlyphScale: 0.36,
@@ -185,6 +188,19 @@ function ocrStatusLabel(status) {
   return 'Đang chuẩn bị OCR…';
 }
 
+function localAiStageLabel(stage) {
+  const labels = {
+    'Connecting…': 'Đang kết nối để tải mô hình…',
+    'Downloading AI model': 'Đang tải mô hình MI-GAN về thiết bị…',
+    'Verifying model…': 'Đang kiểm tra mô hình…',
+    'Loaded from your device': 'Đang dùng mô hình đã lưu trên thiết bị…',
+    'Preparing AI model…': 'Đang khởi tạo mô hình trên thiết bị…',
+    'Loading MI-GAN model…': 'Đang tải mô hình MI-GAN…',
+    'Inpainting…': 'AI đang phục hồi nền…',
+  };
+  return labels[stage] ?? stage ?? 'Đang chuẩn bị AI cục bộ…';
+}
+
 function drawRegionGuide(ctx, region, width, height) {
   if (!region) return;
   const x = Math.round(region.x * width);
@@ -267,12 +283,13 @@ function EditorHeader({ onHelp }) {
   );
 }
 
-function RangeControl({ label, value, min, max, step, onChange, display, hint }) {
+function RangeControl({ id, label, value, min, max, step, onChange, display, hint }) {
+  const inputId = id ?? `range-${label.toLowerCase().replace(/\s+/g, '-')}`;
   const percent = ((Number(value) - Number(min)) / (Number(max) - Number(min))) * 100;
   return (
     <div className="range-control">
-      <div className="range-heading"><label>{label}</label><span>{display}</span></div>
-      <input className="range-input" type="range" min={min} max={max} step={step} value={value} style={{ '--range-progress': `${percent}%` }} onChange={(event) => onChange(Number(event.target.value))} />
+      <div className="range-heading"><label htmlFor={inputId}>{label}</label><span>{display}</span></div>
+      <input id={inputId} className="range-input" type="range" min={min} max={max} step={step} value={value} aria-valuetext={display} style={{ '--range-progress': `${percent}%` }} onChange={(event) => onChange(Number(event.target.value))} />
       {hint && <small className="range-hint">{hint}</small>}
     </div>
   );
@@ -407,6 +424,11 @@ function App() {
   const [isPickingColor, setIsPickingColor] = useState(false);
   const [cleanedRegion, setCleanedRegion] = useState(null);
   const [cleaningBusy, setCleaningBusy] = useState(false);
+  const [aiCleanupBusy, setAiCleanupBusy] = useState(false);
+  const [aiCleanupJobBusy, setAiCleanupJobBusy] = useState(false);
+  const [aiCleanupProgress, setAiCleanupProgress] = useState(0);
+  const [aiCleanupStage, setAiCleanupStage] = useState('');
+  const [aiCleanupError, setAiCleanupError] = useState('');
   const [ocrBusy, setOcrBusy] = useState(false);
   const [ocrProgress, setOcrProgress] = useState(0);
   const [ocrStatus, setOcrStatus] = useState('');
@@ -425,6 +447,9 @@ function App() {
   const dragStartRef = useRef(null);
   const toastTimerRef = useRef(null);
   const ocrWorkerRef = useRef(null);
+  const cleanupRequestRef = useRef(0);
+  const aiCleanupJobLockRef = useRef(false);
+  const componentMountedRef = useRef(true);
   const ocrRequestRef = useRef(0);
   const ocrLockRef = useRef(false);
   const styleMatchRequestRef = useRef(0);
@@ -518,12 +543,18 @@ function App() {
   }, [photoSelection.id, photoSelection.src, photoSelection.name, photoSelection.isSample, notify]);
 
   useEffect(() => {
+    const requestId = ++cleanupRequestRef.current;
+    setAiCleanupBusy(false);
     if (!photo || !region) {
       setCleaningBusy(false);
+      setAiCleanupBusy(false);
       return undefined;
     }
     let cancelled = false;
     setCleanedRegion(null);
+    setAiCleanupError('');
+    setAiCleanupProgress(0);
+    setAiCleanupStage('');
     const x = Math.max(0, Math.min(photo.width - 1, Math.round(region.x * photo.width)));
     const y = Math.max(0, Math.min(photo.height - 1, Math.round(region.y * photo.height)));
     const width = Math.max(1, Math.min(photo.width - x, Math.round(region.w * photo.width)));
@@ -542,17 +573,17 @@ function App() {
         const inkColor = parseHexColor(eraseColor);
         loadOpenCV()
           .then((cv) => {
-            if (cancelled) return;
+            if (cancelled || cleanupRequestRef.current !== requestId) return;
             const pixels = inpaintInkWithOpenCV(originalPixels, inkColor, eraseTolerance, cv);
             setCleanedRegion({ x, y, pixels, divider });
           })
           .catch(() => {
-            if (cancelled) return;
+            if (cancelled || cleanupRequestRef.current !== requestId) return;
             setCleanedRegion({ x, y, pixels: inpaintInk(originalPixels, inkColor, eraseTolerance), divider });
             notify('Bộ tẩy nâng cao chưa tải được; đang dùng chế độ cơ bản. Kết nối mạng rồi thử lại để có kết quả sạch hơn.');
           })
           .finally(() => {
-            if (!cancelled) setCleaningBusy(false);
+            if (!cancelled && cleanupRequestRef.current === requestId) setCleaningBusy(false);
           });
       }
     } catch {
@@ -592,6 +623,13 @@ function App() {
   }, [photo, region, content, style, cleanedRegion, compareOriginal, showGuides, dragBox, fontReady]);
 
   useEffect(() => () => window.clearTimeout(toastTimerRef.current), []);
+  useEffect(() => {
+    componentMountedRef.current = true;
+    return () => {
+      componentMountedRef.current = false;
+      cleanupRequestRef.current += 1;
+    };
+  }, []);
   useEffect(() => () => { void ocrWorkerRef.current?.terminate(); }, []);
 
   useEffect(() => {
@@ -614,10 +652,100 @@ function App() {
     const url = URL.createObjectURL(file);
     setPhotoSelection({ id: `${file.name}-${file.lastModified}-${Date.now()}`, src: url, name: file.name, isSample: false });
     setEraseColor('#ffffff');
+    setStyle((current) => ({ ...current, fontSizeScale: 1 }));
     setCompareOriginal(false);
     setIsAdjusting(false);
     notify('Đã mở ảnh. Vùng chữ là gợi ý tự động — hãy kiểm tra trước khi tải xuống.');
     if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
+  const handleLocalAiCleanup = async () => {
+    if (!photo || photo.isSample || !region || !eraseOld || aiCleanupJobLockRef.current) return;
+
+    let x;
+    let y;
+    let width;
+    let height;
+    let originalPixels;
+    let divider;
+    let mask;
+    try {
+      x = Math.max(0, Math.min(photo.width - 1, Math.round(region.x * photo.width)));
+      y = Math.max(0, Math.min(photo.height - 1, Math.round(region.y * photo.height)));
+      width = Math.max(1, Math.min(photo.width - x, Math.round(region.w * photo.width)));
+      height = Math.max(1, Math.min(photo.height - y, Math.round(region.h * photo.height)));
+      const sourceContext = photo.sourceCanvas.getContext('2d', { willReadFrequently: true });
+      originalPixels = sourceContext.getImageData(x, y, width, height);
+      divider = detectAccentDivider(originalPixels);
+      const maskBits = createInkMask(originalPixels, parseHexColor(eraseColor), eraseTolerance);
+      let selectedPixels = 0;
+      for (let index = 0; index < maskBits.length; index += 1) selectedPixels += maskBits[index] > 0 ? 1 : 0;
+      if (!selectedPixels) {
+        const message = 'Chưa tìm thấy nét mực trong khung. Lấy mẫu màu chữ cũ hoặc tăng độ nhạy rồi thử lại.';
+        setAiCleanupError(message);
+        setAiCleanupStage('');
+        notify(message);
+        return;
+      }
+      mask = createLocalAiMask(maskBits, width, height, 2);
+    } catch {
+      const message = 'Không thể chuẩn bị vùng AI này. Hãy kiểm tra khung hoặc thu nhỏ vùng ảnh.';
+      setAiCleanupError(message);
+      notify(message);
+      return;
+    }
+
+    const requestId = ++cleanupRequestRef.current;
+    aiCleanupJobLockRef.current = true;
+    setAiCleanupJobBusy(true);
+    setAiCleanupBusy(true);
+    setCleaningBusy(true);
+    setAiCleanupError('');
+    setAiCleanupProgress(0);
+    setAiCleanupStage('Đang chuẩn bị AI cục bộ…');
+
+    try {
+      const result = await runLocalAiCleanup(originalPixels, mask, {
+        onProgress: (progress) => {
+          if (requestId !== cleanupRequestRef.current) return;
+          setAiCleanupProgress(progress.total > 0
+            ? Math.min(100, Math.round((progress.done / progress.total) * 100))
+            : 0);
+          setAiCleanupStage(localAiStageLabel(progress.stage));
+        },
+        onStage: (stage) => {
+          if (requestId === cleanupRequestRef.current) setAiCleanupStage(localAiStageLabel(stage));
+        },
+        onPass: (passIndex, totalPasses) => {
+          if (requestId === cleanupRequestRef.current) {
+            setAiCleanupStage(`AI đang phục hồi nền (${passIndex + 1}/${totalPasses})…`);
+          }
+        },
+      });
+      if (requestId !== cleanupRequestRef.current) return;
+      if (!result?.removed || result.engine !== 'migan' || !result.image) {
+        throw new Error('The local AI model did not return an inpainted image.');
+      }
+      setCleanedRegion({ x, y, pixels: result.image, divider });
+      setAiCleanupProgress(100);
+      setAiCleanupStage('Đã hoàn tất AI cục bộ · hãy phóng to kiểm tra nền.');
+      notify('AI đã làm sạch trên thiết bị. Hãy phóng to kiểm tra nền trước khi xuất ảnh.');
+    } catch {
+      if (requestId !== cleanupRequestRef.current) return;
+      const message = 'AI cục bộ chưa chạy được (có thể do mạng hoặc bộ nhớ thiết bị). Hãy thử lại với vùng nhỏ hơn; ảnh không được gửi đi.';
+      setAiCleanupError(message);
+      setAiCleanupStage('');
+      notify(message);
+    } finally {
+      aiCleanupJobLockRef.current = false;
+      if (componentMountedRef.current) {
+        setAiCleanupJobBusy(false);
+        if (requestId === cleanupRequestRef.current) {
+          setAiCleanupBusy(false);
+          setCleaningBusy(false);
+        }
+      }
+    }
   };
 
   const handleScan = () => {
@@ -989,6 +1117,10 @@ function App() {
     }
   };
 
+  const visibleLineCount = [content.weekday, content.date, content.time]
+    .filter((line) => String(line ?? '').trim()).length
+    + String(content.address ?? '').split(/\r?\n/).filter((line) => line.trim()).length;
+
   return (
     <div className="app-shell">
       <aside className="sidebar">
@@ -1104,13 +1236,13 @@ function App() {
                   <button className="toolbar-button toolbar-scan" onClick={handleScan} disabled={!photo}><ScanSearch size={15} /> Quét lại</button>
                 </div>
               </div>
-              {textScaled && !compareOriginal && <div className="fit-warning"><Info size={14} /> Một dòng dài hơn khung — cỡ chữ được thu nhỏ để vừa vùng đã chọn.</div>}
+              {textScaled && !compareOriginal && <div className="fit-warning"><Info size={14} /> Địa chỉ đã được thu nhỏ để vừa vùng chọn. Hãy kiểm tra khung nếu chữ nhỏ hơn mong muốn.</div>}
             </section>
 
             <aside className="inspector-panel">
               <div className="inspector-heading">
                 <div><span className="inspector-kicker">THÔNG TIN HIỂN THỊ</span><h2>Nội dung trên ảnh</h2></div>
-                <span className="line-count">{[content.weekday, content.date, content.time, content.address].filter((line) => String(line ?? '').trim()).length.toString().padStart(2, '0')} dòng</span>
+                <span className="line-count">{visibleLineCount.toString().padStart(2, '0')} dòng</span>
               </div>
               <div className="inspector-scroll">
                 <div className="content-section">
@@ -1119,7 +1251,7 @@ function App() {
                     <div className="editor-field"><label htmlFor="date">Ngày</label><input id="date" value={content.date} onChange={(event) => updateContent('date', event.target.value)} placeholder="24 tháng 10, 2026" /></div>
                   </div>
                   <div className="editor-field time-field"><label htmlFor="time"><Clock3 size={14} /> Giờ · HH:MM</label><div className="field-action-wrap"><input id="time" type="time" step="60" value={formatTimeToMinutes(content.time)} onChange={(event) => updateContent('time', event.target.value)} aria-label="Giờ, chỉ gồm giờ và phút" /><button className="field-inline-action" onClick={useCurrentTime} title="Dùng ngày giờ hiện tại"><RotateCcw size={14} /><span>Bây giờ</span></button></div></div>
-                  <div className="editor-field address-field"><label htmlFor="address"><MapPin size={14} /> Địa chỉ / địa điểm</label><input id="address" value={content.address} onChange={(event) => updateContent('address', event.target.value)} placeholder="Tên trường hoặc địa chỉ" /></div>
+                  <div className="editor-field address-field"><label htmlFor="address"><MapPin size={14} /> Địa chỉ / địa điểm</label><textarea id="address" rows={3} value={content.address} onChange={(event) => updateContent('address', event.target.value)} placeholder="Tên trường hoặc địa chỉ" aria-describedby="address-break-hint" /><small id="address-break-hint" className="address-break-hint">Nhấn Enter để xuống dòng. Ứng dụng không tự ngắt dòng.</small></div>
                 </div>
 
                 <div className="inspector-divider" />
@@ -1154,11 +1286,25 @@ function App() {
                   </div>
                   <button className="sampling-button" onClick={() => { setCompareOriginal(false); setIsAdjusting(false); setIsPickingColor(true); notify('Chạm vào màu chữ cũ trên ảnh để lấy mẫu.'); }} disabled={!photo}><Pipette size={15} /><span>Lấy màu mực cũ từ ảnh</span><ArrowRight size={14} /></button>
                   <label className="toggle-row">
-                    <span className="toggle-copy"><b>Xoá nét chữ cũ</b><small>{cleaningBusy ? 'Đang phục hồi nền quanh nét chữ…' : 'Làm sạch mực cũ trong vùng quét'}</small></span>
+                    <span className="toggle-copy"><b>Xoá nét chữ cũ</b><small>{aiCleanupBusy ? aiCleanupStage : cleaningBusy ? 'Đang phục hồi nền quanh nét chữ…' : 'Làm sạch mực cũ trong vùng quét'}</small></span>
                     <input type="checkbox" checked={eraseOld} onChange={(event) => setEraseOld(event.target.checked)} />
                     <span className="toggle-track" aria-hidden="true"><i /></span>
                   </label>
-                  {eraseOld && !photo?.isSample && <RangeControl label="Độ nhạy khi xoá" min={30} max={140} step={2} value={eraseTolerance} onChange={setEraseTolerance} display={`${eraseTolerance}`} hint="Tăng nếu còn sót chữ; giảm nếu nền bị ảnh hưởng nhiều." />}
+                  {eraseOld && !photo?.isSample && <>
+                    <RangeControl label="Độ nhạy khi xoá" min={30} max={140} step={2} value={eraseTolerance} onChange={setEraseTolerance} display={`${eraseTolerance}`} hint="Tăng nếu còn sót chữ; giảm nếu nền bị ảnh hưởng nhiều." />
+                    <div className="cleanup-limit-note"><Info size={12} /> Nền bị chữ che chỉ có thể ước tính lại; hãy phóng to kiểm tra trước khi xuất.</div>
+                    <div className="local-ai-cleanup-panel">
+                      <button type="button" className="local-ai-cleanup-button" onClick={handleLocalAiCleanup} disabled={!photo || !eraseOld || aiCleanupJobBusy} aria-busy={aiCleanupJobBusy}>
+                        <span className="local-ai-cleanup-icon">{aiCleanupJobBusy ? <span className="loading-spinner small-spinner" /> : <Sparkles size={16} />}</span>
+                        <span className="local-ai-cleanup-copy"><b>{aiCleanupBusy ? 'Đang tẩy bằng AI…' : aiCleanupJobBusy ? 'Đang hoàn tất lượt AI trước…' : 'Tẩy chữ cũ bằng AI'}</b><small>{aiCleanupBusy ? aiCleanupStage : aiCleanupJobBusy ? 'Đang xử lý trên thiết bị…' : 'MI-GAN cục bộ · mô hình khoảng 30 MB lần đầu'}</small></span>
+                        <span className="local-ai-cleanup-action">{aiCleanupBusy ? `${aiCleanupProgress}%` : aiCleanupJobBusy ? <span className="loading-spinner small-spinner" /> : <ArrowRight size={15} />}</span>
+                      </button>
+                      {aiCleanupBusy && <div className="local-ai-progress-track" role="progressbar" aria-label="Tiến độ chạy AI cục bộ" aria-valuemin={0} aria-valuemax={100} aria-valuenow={aiCleanupProgress}><i style={{ width: `${Math.max(3, aiCleanupProgress)}%` }} /></div>}
+                      <div className="local-ai-privacy-note"><ShieldCheck size={12} /><span>Ảnh không được tải lên. Mô hình được lưu trên thiết bị khi trình duyệt cho phép; xử lý cục bộ.</span></div>
+                      {aiCleanupError && <div className="local-ai-error" role="alert"><Info size={13} />{aiCleanupError}</div>}
+                      {!aiCleanupBusy && aiCleanupProgress === 100 && aiCleanupStage && !aiCleanupError && <div className="local-ai-success" role="status">{aiCleanupStage}</div>}
+                    </div>
+                  </>}
                 </section>
 
                 <div className="inspector-divider" />
@@ -1170,7 +1316,7 @@ function App() {
                     <div className="style-color-label"><span className="color-swatch" style={{ background: style.color }} /><span><b>Màu chữ mới</b><small>Áp dụng cho 4 dòng</small></span></div>
                     <label className="color-picker" title="Chọn màu chữ mới"><input type="color" value={style.color} onChange={(event) => updateStyle('color', event.target.value)} /><span>{style.color.toUpperCase()}</span><ChevronDown size={13} /></label>
                   </div>
-                  <RangeControl label="Tỉ lệ cỡ chữ" min={0.016} max={0.046} step={0.001} value={style.fontScale} onChange={(value) => updateStyle('fontScale', value)} display={`${Math.round(style.fontScale / 0.028 * 100)}%`} hint="Từng trường được tự tính riêng; thanh này phóng to/thu nhỏ toàn bộ." />
+                  <RangeControl label="Cỡ chữ toàn bộ" min={0.65} max={1.35} step={0.05} value={style.fontSizeScale} onChange={(value) => updateStyle('fontSizeScale', value)} display={`${Math.round(style.fontSizeScale * 100)}%`} hint="Điều khiển trực tiếp cỡ chữ giờ, ngày, thứ và địa điểm · 100% là cỡ khớp ảnh gốc." />
                   <RangeControl label="Cỡ riêng dòng giờ" min={0.65} max={1.4} step={0.01} value={style.timeSizeScale} onChange={(value) => updateStyle('timeSizeScale', value)} display={`${Math.round(style.timeSizeScale * 100)}%`} hint="Chỉ thay đổi giờ; ngày, thứ và địa điểm không đổi." />
                   <RangeControl label="Khoảng cách dòng" min={1.0} max={1.5} step={0.01} value={style.lineHeight} onChange={(value) => updateStyle('lineHeight', value)} display={`${style.lineHeight.toFixed(2)}×`} />
                   <div className="style-options-row">

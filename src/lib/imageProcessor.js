@@ -800,7 +800,7 @@ export function inferStampTypography(imageData, inkColor = { r: 255, g: 255, b: 
     // The photo sample's time line is slightly heavier than its fine-print
     // rows. Keep the default at regular instead of making the whole stamp bold.
     weight: inkCoverage < 0.12 ? 300 : inkCoverage < 0.29 ? 400 : 700,
-    timeWeight: inkCoverage < 0.29 ? 500 : 700,
+    timeWeight: inkCoverage < 0.29 ? 600 : 700,
     timeGlyphScale: clamp(timeLine.height / divider.h, 0.55, 1.25),
     detailGlyphScale: clamp(detailGlyphHeight / divider.h, 0.18, 0.68),
     addressGlyphScale: clamp(addressGlyphHeight / divider.h, 0.18, 0.68),
@@ -1204,7 +1204,7 @@ export function drawTimestamp(ctx, region, content, style, canvasWidth, canvasHe
     { key: 'weekday', text: normalizedContent.weekday },
     { key: 'date', text: normalizedContent.date },
     { key: 'time', text: normalizedContent.time },
-    { key: 'address', text: normalizedContent.address },
+    ...splitManualAddressLines(normalizedContent.address).map((text) => ({ key: 'address', text })),
   ].filter(({ text }) => String(text ?? '').trim().length > 0);
   const lines = lineItems.map(({ text }) => text);
   if (!lines.length || w < 1 || h < 1) return { fontSize: 0, scaled: false };
@@ -1214,7 +1214,8 @@ export function drawTimestamp(ctx, region, content, style, canvasWidth, canvasHe
 
   const paddingX = Math.max(5, w * 0.035);
   const paddingY = Math.max(4, h * 0.075);
-  const requestedSize = Math.max(1, canvasHeight * style.fontScale);
+  const globalSizeScale = clamp(style.fontSizeScale ?? 1, 0.55, 1.45);
+  const requestedSize = Math.max(1, canvasHeight * style.fontScale * globalSizeScale);
   const lineHeight = style.lineHeight ?? 1.2;
   ctx.save();
   const timeSizeScale = clamp(style.timeSizeScale ?? 1, 0.65, 1.4);
@@ -1263,19 +1264,15 @@ function drawTimestampAroundDivider(ctx, region, content, style, canvasWidth, ca
   const fontFamily = style.fontFamily ?? '"Roboto Condensed", "Arial Narrow", Arial, sans-serif';
   const weight = style.weight ?? 400;
   const timeWeight = style.timeWeight ?? Math.min(700, weight + 100);
-  const scale = clamp((style.fontScale ?? 0.028) / 0.028, 0.55, 1.8);
+  const scale = clamp(style.fontSizeScale ?? 1, 0.55, 1.45);
   const timeText = String(content.time ?? '');
   const dateText = String(content.date ?? '');
   const weekdayText = String(content.weekday ?? '');
-  const addressText = String(content.address ?? '').replace(/\s*·\s*/g, ', ');
+  const addressText = String(content.address ?? '').replace(/[ \t]*·[ \t]*/g, ', ');
   const timeSample = '14:04';
   const detailSample = '22 Tháng 10, 2026';
   const weekdaySample = 'Thứ Năm';
-  const addressSamples = [
-    'Chợ Phú Nhuận, Cao Thắng, Thành Phố Hồ Chí Minh,',
-    'P. Phú Nhuận',
-  ];
-  const addressSample = addressSamples[0];
+  const addressSample = 'Chợ Phú Nhuận, Cao Thắng, Thành Phố Hồ Chí Minh,';
   const sourceWidths = style.sourceWidths ?? {};
   const addressSourceWidths = Array.isArray(sourceWidths.address) ? sourceWidths.address : [sourceWidths.address];
   const timeSizeScale = clamp(style.timeSizeScale ?? 1, 0.65, 1.4);
@@ -1300,14 +1297,6 @@ function drawTimestampAroundDivider(ctx, region, content, style, canvasWidth, ca
   const addressSize = fontSizeForGlyphHeight(ctx, addressSample, fontFamily, weight, addressGlyphHeight);
   const dateWidthScale = sourceWidthScale(ctx, detailSample, sourceWidths.date, fontFamily, weight, detailSize);
   const weekdayWidthScale = sourceWidthScale(ctx, weekdaySample, sourceWidths.weekday, fontFamily, weight, detailSize);
-  const addressWidthScaleForSize = (fontSize, index = 0) => sourceWidthScale(
-    ctx,
-    addressSamples[index] ?? addressSample,
-    addressSourceWidths[index] ?? addressSourceWidths[0],
-    fontFamily,
-    weight,
-    fontSize,
-  );
   const timeWidth = Math.max(1, dividerX - timeX - Math.max(4, w * 0.01));
   const detailGap = Math.max(4, w * (style.detailGapRatio ?? 0.018));
   const detailX = dividerX + dividerWidth + detailGap;
@@ -1332,19 +1321,26 @@ function drawTimestampAroundDivider(ctx, region, content, style, canvasWidth, ca
     ? dividerHeight * style.addressPitchScale * scale * (fontSize / addressSize) * lineHeightFactor
     : fontSize * addressLineHeight;
   let fittedAddressSize = addressSize;
-  let addressLines = [];
+  const addressLines = splitManualAddressLines(addressText);
   for (let attempt = 0; attempt < 4; attempt += 1) {
-    ctx.font = `${weight} ${fittedAddressSize}px ${fontFamily}`;
-    addressLines = wrapTextToSourceWidths(ctx, addressText, addressSourceWidths, addressMaxWidth);
     const leading = addressLeadingForSize(fittedAddressSize);
     if (addressLines.length * leading <= addressAvailableHeight) break;
     fittedAddressSize *= addressAvailableHeight / Math.max(1, addressLines.length * leading);
   }
+  const addressWasFittedVertically = fittedAddressSize < addressSize * 0.98;
+  const validAddressSourceWidths = addressSourceWidths.filter((width) => Number.isFinite(width) && width > 0);
+  const sourceRowsMatchAddress = validAddressSourceWidths.length === addressLines.length;
+  let addressNeedsWidthFit = false;
   const addressLineWidthScales = addressLines.map((line, index) => {
-    const sourceWidth = addressSourceWidths[index];
-    return Number.isFinite(sourceWidth) && sourceWidth > 0
+    ctx.font = `${weight} ${fittedAddressSize}px ${fontFamily}`;
+    const naturalWidth = ctx.measureText(line).width;
+    const fitScale = naturalWidth > addressMaxWidth ? addressMaxWidth / naturalWidth : 1;
+    if (fitScale < 0.98) addressNeedsWidthFit = true;
+    const sourceWidth = sourceRowsMatchAddress ? validAddressSourceWidths[index] : null;
+    const matchedScale = Number.isFinite(sourceWidth)
       ? sourceWidthScale(ctx, line, sourceWidth, fontFamily, weight, fittedAddressSize)
-      : addressWidthScaleForSize(fittedAddressSize, index);
+      : 1;
+    return Math.min(fitScale, matchedScale);
   });
   const timeMetrics = getTextVerticalMetrics(ctx, timeText || timeSample, fontFamily, timeWeight, timeSize);
 
@@ -1385,7 +1381,12 @@ function drawTimestampAroundDivider(ctx, region, content, style, canvasWidth, ca
   ctx.fillStyle = dividerColor;
   ctx.fillRect(dividerX, dividerY, dividerWidth, dividerHeight);
   ctx.restore();
-  return { fontSize: timeSize, scaled: true, anchoredToDivider: true };
+  return {
+    fontSize: timeSize,
+    scaled: addressWasFittedVertically || addressNeedsWidthFit,
+    addressLineCount: addressLines.length,
+    anchoredToDivider: true,
+  };
 }
 
 function fontSizeForGlyphHeight(ctx, text, family, weight, targetHeight) {
@@ -1440,65 +1441,12 @@ function fillTextHorizontallyScaled(ctx, text, x, baseline, maxWidth, scaleX = 1
   ctx.restore();
 }
 
-function wrapText(ctx, text, maxWidth) {
-  const words = text.trim().split(/\s+/).filter(Boolean);
-  const lines = [];
-  let line = '';
-  for (const word of words) {
-    const candidate = line ? `${line} ${word}` : word;
-    if (line && ctx.measureText(candidate).width > maxWidth) {
-      lines.push(line);
-      line = word;
-    } else {
-      line = candidate;
-    }
-  }
-  if (line) lines.push(line);
-  return lines;
-}
-
-function wrapTextToSourceWidths(ctx, text, sourceWidths, maxWidth) {
-  const words = text.trim().split(/\s+/).filter(Boolean);
-  if (!words.length) return [];
-  const targetWidths = (sourceWidths ?? []).filter((width) => Number.isFinite(width) && width > 0);
-  if (targetWidths.length < 2) return wrapText(ctx, text, maxWidth);
-
-  const fullText = words.join(' ');
-  if (ctx.measureText(fullText).width <= targetWidths[0] * 1.12) {
-    return wrapText(ctx, fullText, maxWidth);
-  }
-
-  const lineCount = Math.min(targetWidths.length, words.length);
-  const widths = new Map();
-  const measureSegment = (start, end) => {
-    const key = `${start}:${end}`;
-    if (!widths.has(key)) widths.set(key, ctx.measureText(words.slice(start, end).join(' ')).width);
-    return widths.get(key);
-  };
-  const states = Array.from({ length: lineCount + 1 }, () => new Map());
-  states[0].set(0, { cost: 0, lines: [] });
-
-  for (let lineIndex = 0; lineIndex < lineCount; lineIndex += 1) {
-    for (const [start, state] of states[lineIndex]) {
-      const lastEnd = words.length - (lineCount - lineIndex - 1);
-      for (let end = start + 1; end <= lastEnd; end += 1) {
-        const segmentWidth = measureSegment(start, end);
-        const targetWidth = targetWidths[lineIndex] ?? targetWidths[targetWidths.length - 1];
-        const scale = clamp(targetWidth / Math.max(1, segmentWidth), 0.65, 1.4);
-        const overflow = Math.max(0, segmentWidth * scale - maxWidth) / maxWidth;
-        const cost = state.cost + Math.abs(Math.log(scale)) + overflow * 2;
-        const previous = states[lineIndex + 1].get(end);
-        if (!previous || cost < previous.cost) {
-          states[lineIndex + 1].set(end, {
-            cost,
-            lines: [...state.lines, words.slice(start, end).join(' ')],
-          });
-        }
-      }
-    }
-  }
-
-  return states[lineCount].get(words.length)?.lines ?? wrapText(ctx, fullText, maxWidth);
+function splitManualAddressLines(text) {
+  const normalized = String(text ?? '')
+    .replace(/\r\n?/g, '\n')
+    .replace(/[ \t]*·[ \t]*/g, ', ')
+    .trim();
+  return normalized ? normalized.split('\n').map((line) => line.trim()) : [];
 }
 
 export function fallbackForCorner(corner, w = 0.40, h = 0.25) {
