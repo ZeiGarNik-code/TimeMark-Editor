@@ -10,7 +10,7 @@
     "dev": "vite --host 0.0.0.0",
     "build": "vite build",
     "build:desktop": "vite build --mode desktop",
-    "package:win": "npm run build:desktop && electron-builder --win nsis portable",
+    "package:win": "npm run build:desktop && electron-builder --win nsis portable --publish never",
     "preview": "vite preview --host 0.0.0.0",
     "prepare:timemark-assets": "node scripts/copy-ocr-assets.mjs",
     "test": "node --test"

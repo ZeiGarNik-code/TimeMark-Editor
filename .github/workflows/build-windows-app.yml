@@ -56,7 +56,9 @@ jobs:
           npm run package:win 2>&1 | Tee-Object -FilePath $logPath
           $buildExitCode = $LASTEXITCODE
           if ($buildExitCode -ne 0) {
-            $tail = (Get-Content $logPath | Select-Object -Last 40) -join ' | '
+            $tail = ((Get-Content $logPath | Select-Object -Last 12) -join ' | ')
+            $tail = [regex]::Replace($tail, '\x1B\[[0-?]*[ -/]*[@-~]', '')
+            if ($tail.Length -gt 6000) { $tail = $tail.Substring($tail.Length - 6000) }
             $annotation = $tail.Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
             Write-Output "::error title=Windows package failed::$annotation"
             Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value ("## Windows package failed`n`n````text`n$tail`n````") -Encoding utf8
