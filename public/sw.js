@@ -1,8 +1,8 @@
-const CACHE_NAME = 'timemark-studio-v3';
+const CACHE_NAME = 'nonstopmaker-lite-v1';
 const APP_BASE = new URL('.', self.registration.scope);
 const appUrl = (path = '') => new URL(path, APP_BASE).href;
 const INDEX_URL = appUrl('index.html');
-const APP_SHELL = ['', 'index.html', 'manifest.webmanifest', 'icon.svg', 'demo-school.jpg'].map(appUrl);
+const APP_SHELL = ['', 'index.html', 'manifest.webmanifest', 'icon.svg'].map(appUrl);
 
 self.addEventListener('install', (event) => {
   event.waitUntil((async () => {

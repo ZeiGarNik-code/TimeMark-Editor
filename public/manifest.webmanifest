@@ -1,13 +1,13 @@
 {
-  "name": "TimeMark Studio",
-  "short_name": "TimeMark",
-  "description": "Chỉnh sửa mốc thời gian trên ảnh TimeMark ngay trên thiết bị.",
+  "name": "NonstopMaker Lite — DJ Set Builder",
+  "short_name": "NonstopMaker Lite",
+  "description": "Phân tích BPM/tone, xếp set và render MP3 trên thiết bị; không tải nhạc lên máy chủ.",
   "lang": "vi",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
-  "background_color": "#f4f6f9",
-  "theme_color": "#f4f6f9",
+  "background_color": "#07101f",
+  "theme_color": "#07101f",
   "icons": [
     {
       "src": "./icon.svg",

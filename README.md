@@ -1,50 +1,59 @@
-# TimeMark Studio
+# NonstopMaker Lite
 
-Ứng dụng web chỉnh mốc ngày giờ trên ảnh TimeMark; giao diện hiện dùng tiếng Việt.
+A fast, browser-local DJ set builder inspired by the supplied NonstopMaker screenshots. It includes real local-file playback, BPM/key estimation, and MP3 mixing/rendering. No demo music is bundled, and audio is never uploaded.
 
-## Mở ứng dụng
-
-**https://timemark-studio.vercel.app/**
-
-Không cần tài khoản hay đăng nhập. Sau khi mở trang, có thể chọn ảnh của bạn hoặc dùng ảnh mẫu. Ảnh được giải mã, xem trước, xử lý và xuất ngay trong trình duyệt; ứng dụng không gửi ảnh lên máy chủ hay cơ sở dữ liệu.
-
-## Chạy thử cục bộ
+## Run locally
 
 ```bash
 npm install
 npm run dev
 ```
 
-Mở địa chỉ do Vite hiển thị. Dùng **Ảnh mẫu** để khôi phục ảnh minh hoạ; dùng **Chọn ảnh** để mở JPG, PNG hoặc WebP từ thiết bị.
+Open the Vite URL. Choose **Mở demo** to preview the interface with synthetic metadata, or select a local folder/files to work with real audio. Demo tracks do not contain audio and cannot be analyzed or rendered.
 
-## Kiểm thử trực tiếp trên web
+## Workflow
 
-Mở **Kiểm thử trên web** ở thanh điều hướng bên trái. Bộ test nằm ngay trên màn hình chỉnh sửa và cho phép:
+1. **Choose music** — select local audio files/folders and set a target duration, mood, and styles.
+2. **Arrange** — search/select tracks, reorder them, run BPM/key analysis, and sort the set using estimated tempo, Camelot key, and energy.
+3. **Preview & edit** — listen to an individual local track, inspect the timeline, and configure crossfade, fade length, and RMS normalization. Imported-file waveform peaks are sampled locally during analysis or rendering; demo tracks use decorative waveforms.
+4. **Export** — render selected local audio to an MP3, or download an M3U8 playlist / JSON mix plan.
 
-1. Dùng ảnh minh hoạ hoặc chọn ảnh của bạn.
-2. Quét lại khung chữ, chạy OCR, rồi kiểm tra nội dung nhận dạng trong phần xem trước OCR.
-3. Nạp bộ giá trị thử có địa điểm dài để xem bố cục giờ/ngày quanh gạch cam.
-4. Đánh dấu 5 tiêu chí **Đạt/Lỗi**, ghi chú hiện tượng lem/bóng chữ, rồi sao chép báo cáo (nếu trình duyệt chặn clipboard, báo cáo TXT sẽ được tải xuống).
+## Local audio analysis
 
-Bộ test là checklist thao tác thủ công trên giao diện; **Kiểm thử và build** phía dưới là bộ test tự động.
+- Audio is decoded with the browser's Web Audio API and analyzed in a dedicated Web Worker; files are not sent to a server.
+- BPM, musical-key/Camelot, and RMS-based energy results are estimates, not professional beat-grid or key-detection guarantees. BPM/RMS energy use up to the first 120 seconds; key detection uses up to 75 seconds. The browser may need to decode the source file before analysis starts.
+- Analysis is limited to 200 MB per source file. Supported input formats depend on the browser's audio decoder; common MP3, WAV, FLAC, M4A, and AAC files are the best-supported choices.
 
-## Tính năng
+## MP3 rendering
 
-- Quét tương phản ở bốn góc để **gợi ý vùng** có chữ; cho phép chọn góc hoặc kéo để vẽ lại vùng.
-- Chạy OCR tiếng Việt + tiếng Anh ngay trong trình duyệt trên vùng đã chọn; xem phần chữ thô, độ tin cậy và trường được nhận dạng trước khi áp dụng vào ô thứ/ngày/giờ/địa điểm.
-- Nhập thứ, ngày, giờ và địa điểm; tuỳ chỉnh màu, cỡ chữ, căn lề, khoảng cách dòng, độ đậm, bóng và độ đục. Nút **Khớp ảnh gốc** ước lượng gần đúng màu/cỡ/căn lề/khoảng cách từ vùng chữ đã chọn.
-- Lấy mẫu màu mực cũ bằng cách chọn một điểm trên ảnh. Bộ làm sạch dùng OpenCV.js Telea inpainting cục bộ, mở rộng mask nhẹ để xoá viền khử răng cưa/bóng và nhận diện vạch nhấn màu mảnh. Khi phát hiện gạch cam dọc, thời gian được đặt bên trái, ngày/thứ bên phải và gạch được vẽ lại đúng vị trí/màu; địa điểm nằm phía dưới. Chế độ nội suy cơ bản là phương án dự phòng nếu chưa nạp được OpenCV.
-- Xuất PNG (không nén mất dữ liệu khi xuất) hoặc JPG chất lượng 97%. Canvas xuất giữ nguyên chiều rộng và chiều cao pixel của ảnh đã mở.
-- Có thể cài như ứng dụng web và dùng ngoại tuyến sau khi mở trang ít nhất một lần (trình duyệt cần hỗ trợ service worker; khi triển khai cần HTTPS). Để OCR và bộ tẩy nâng cao hoạt động offline, hãy chạy OCR và làm sạch chữ ít nhất một lần khi có kết nối để trình duyệt nạp/lưu mô hình và OpenCV.js.
+- The browser decodes each selected track, applies per-track RMS gain normalization (optional), mixes equal-power crossfades, and encodes MP3 in a dedicated worker using `@breezystack/lamejs`.
+- Choose 128, 192, or 256 kbps. Fade length can be rounded to a beat count using the measured BPM when analysis data is available. This is not time-stretching, phase alignment, or full DJ-style beatmatching.
+- Browser render limits: 120 MB per source track, 15 minutes per track, 120 minutes per set. Input decoding and supported MP3 sample rates vary by browser/device. Long mixes may use substantial memory; render shorter sets on low-memory devices.
+- Once rendering completes, click **Tải MP3** to download the generated file. The original files remain untouched and local.
 
-## Giới hạn
+## Performance / privacy
 
-Bộ quét chỉ gợi ý **vị trí có khả năng chứa chữ**; với khung hẹp ở góc dưới, ứng dụng nới khung vừa đủ để giữ cả khối mốc nhiều dòng nhưng vẫn cần kiểm tra và có thể kéo lại. OCR có thể nhận sai, nhất là trên ảnh nhỏ, chữ mờ hoặc nền phức tạp. Hãy xem văn bản thô/độ tin cậy và soát lại các trường trước khi áp dụng. Telea inpainting giảm vệt chữ cũ so với nội suy đơn giản, nhưng không thể khôi phục chính xác chi tiết bị chữ che trên nền nhiều hoạ tiết; hãy so sánh ảnh gốc và kiểm tra tệp đầu ra.
+- No sample library, demo audio, or original large audio files are included in the repository.
+- Heavy analysis and MP3-render code is dynamically loaded only when those actions are used; MP3 encoding runs in a worker.
+- The TimeMark Studio OCR/OpenCV modules remain separate from the default NonstopMaker route.
 
-## Kiểm thử và build
+## Windows desktop app (.exe)
+
+A Windows 64-bit Electron wrapper is included. It loads the bundled UI through a secure local protocol, keeps Node integration disabled, and does not need a server or network connection for audio work.
+
+- On a Windows development machine, run `npm ci` then `npm run package:win`. The `release/` directory receives both an NSIS installer and a portable `.exe`.
+- The **Build NonstopMaker for Windows** GitHub Actions workflow also packages both executables. Download the `NonstopMaker-Lite-Windows` artifact from the workflow run.
+- To sign the Windows executables, add an organization/publisher code-signing certificate as the repository Actions secret `WINDOWS_CSC_PFX_BASE64` (base64-encoded PFX) and its password as `WINDOWS_CSC_KEY_PASSWORD`. If either secret is absent, the workflow labels the artifact unsigned; unsigned builds may show a Windows SmartScreen warning. Never put the certificate or password in source control. No original audio files or music samples are included in the build.
+
+## Test and build
 
 ```bash
 npm test
 npm run build
+npm run build:desktop
 npm run preview
 ```
+
+## Legacy TimeMark Studio
+
+The original TimeMark Studio app remains available at `?app=timemark`. To copy its local OCR/OpenCV assets for a legacy build, run `npm run prepare:timemark-assets` first. Those large assets are not copied into the default NonstopMaker Lite build.
